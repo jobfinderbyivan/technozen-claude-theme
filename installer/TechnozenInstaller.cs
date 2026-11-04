@@ -415,7 +415,7 @@ class Loader : Form
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.CenterScreen;
         AutoScaleMode = AutoScaleMode.None;
-        scale = DeviceDpi / 96f * 1.25f; // the card is laid out at 460x300 and shown a quarter larger
+        scale = DeviceDpi / 96f * 1.5625f; // the card is laid out at 460x300 and shown at 1.25 x 1.25 of that
         ClientSize = new Size((int)(W * scale), (int)(H * scale));
         TopMost = true;
         ShowInTaskbar = true;

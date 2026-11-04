@@ -20,7 +20,7 @@ class Orb
 class Scene
 {
     // Heavy, slow glass: half the speed of the first version, more drag, and mass growing faster than area.
-    public const float Step = 1f / 60f, MaxSpeed = 7f, MouseForce = 4500f, Restitution = 0.9f, WallRestitution = 0.85f, Damping = 0.99f;
+    public const float Step = 1f / 60f, MaxSpeed = 3.5f, MouseForce = 2250f, Restitution = 0.9f, WallRestitution = 0.85f, Damping = 0.99f;
     public const float MinClosingSpeed = 0.2f; // px per step; slower touches do not ring
     public readonly List<Orb> Orbs = new List<Orb>();
     public readonly List<float[]> Hits = new List<float[]>(); // x, y, age (starts negative so the flash lands when the bell is heard)
@@ -62,8 +62,8 @@ class Scene
                 }
             }
             o.X = bestX; o.Y = bestY;
-            o.Mass = (float)Math.Pow(o.R, 2.5);
-            double a = rng.NextDouble() * Math.PI * 2; float v = 0.3f + (float)rng.NextDouble() * 0.6f;
+            o.Mass = (float)Math.Pow(o.R, 3); // volume: a big orb is many times heavier than a small one
+            double a = rng.NextDouble() * Math.PI * 2; float v = 0.15f + (float)rng.NextDouble() * 0.3f;
             o.Vx = (float)Math.Cos(a) * v; o.Vy = (float)Math.Sin(a) * v;
             Orbs.Add(o);
         }
@@ -77,7 +77,8 @@ class Scene
         foreach (var o in Orbs)
         {
             float dx = o.X - MouseX, dy = o.Y - MouseY, d2 = dx * dx + dy * dy + 400;
-            if (d2 < 250000) { float a = MouseForce / d2, d = (float)Math.Sqrt(d2); o.Vx += a * dx / d; o.Vy += a * dy / d; }
+            // Heavy orbs answer the cursor sluggishly: the push is scaled by the square root of a mid-size orb's mass over this one's.
+            if (d2 < 250000) { float a = MouseForce / d2 * (float)Math.Sqrt(125000 / o.Mass), d = (float)Math.Sqrt(d2); o.Vx += a * dx / d; o.Vy += a * dy / d; }
             o.Vx *= Damping; o.Vy *= Damping;
             float s = o.Speed; if (s > MaxSpeed) { o.Vx *= MaxSpeed / s; o.Vy *= MaxSpeed / s; }
             o.X += o.Vx; o.Y += o.Vy;
@@ -101,8 +102,8 @@ class Scene
                 lastRing[i, j] = step;
                 // Loudness from the closing speed, heavier for big pairs, with a curve that keeps drifts
                 // soft and lets a hard mouse-flung hit go all the way: force decides the volume.
-                float size = 0.6f + 0.4f * (float)Math.Min(1, Math.Sqrt(1 / (ia + ib) / 30000f));
-                float loud = Math.Min(1f, (float)Math.Pow(-vrel / (1.6f * MaxSpeed), 1.3) * 1.3f * size);
+                float size = 0.6f + 0.4f * (float)Math.Min(1, Math.Sqrt(1 / (ia + ib) / 150000f));
+                float loud = Math.Min(1f, (float)Math.Pow(-vrel / (1.2f * MaxSpeed), 1.5) * 1.5f * size);
                 Collisions++;
                 Hits.Add(new[] { a.X + nx * a.R, a.Y + ny * a.R, -0.25f });
                 if (Struck != null) Struck(a, b, loud);
@@ -144,7 +145,7 @@ class Synth : IDisposable
     static readonly float TailDecay = (float)Math.Exp(-1.0 / (0.01 * Rate));
     readonly object gate = new object();
     long rendered; // absolute frames rendered so far; a strike starts at the next frame rendered
-    const float Attack = 1f / (0.06f * Rate), Release = 1f / (0.3f * Rate), BellAttackFrames = 0.015f * Rate, MasterGain = 0.75f, Silent = 3e-5f;
+    const float Attack = 1f / (0.06f * Rate), Release = 1f / (0.3f * Rate), BellAttackFrames = 0.015f * Rate, MasterGain = 1f, Silent = 3e-5f;
 
     public void SetMotion(int voice, float freq, float speed)
     {
@@ -175,7 +176,7 @@ class Synth : IDisposable
                 for (int side = 0; side < 2; side++)
                 {
                     int k = side * Partials + p; float f = (side == 0 ? fA : fB) * PartialRatio[p];
-                    bInc[slot, k] = f / Rate; bAmp[slot, k] = PartialAmp[p] * loud * 0.7f; // phases continue: no step in the waveform
+                    bInc[slot, k] = f / Rate; bAmp[slot, k] = PartialAmp[p] * loud; // phases continue: no step in the waveform
                     bDecay[slot, k] = (float)Math.Exp(-1.0 / (PartialDecay[p] * Rate));
                 }
             bStart[slot] = rendered; bActive[slot] = true;
@@ -312,15 +313,15 @@ static class SelfTest
         var pair = new Scene(new Random(3), bounds);
         while (pair.Orbs.Count > 2) pair.Orbs.RemoveAt(2);
         Orb A = pair.Orbs[0], B = pair.Orbs[1];
-        A.X = 150; A.Y = 120; A.Vx = 3.5f; A.Vy = 0; B.X = 150 + A.R + B.R + 8; B.Y = 120; B.Vx = -3.5f; B.Vy = 0;
+        A.X = 150; A.Y = 120; A.Vx = 0.4f * Scene.MaxSpeed; A.Vy = 0; B.X = 150 + A.R + B.R + 8; B.Y = 120; B.Vx = -0.4f * Scene.MaxSpeed; // under the cap even after the lighter one recoils B.Vy = 0;
         float px0 = A.Mass * A.Vx + B.Mass * B.Vx; float loudSeen = -1; pair.Struck = (a, b, l) => loudSeen = l;
         for (int t = 0; t < 10; t++) pair.Tick();
         float px1 = A.Mass * A.Vx + B.Mass * B.Vx, expected = px0 * (float)Math.Pow(Scene.Damping, 10); // damping takes its share each step; the collision must take none
         check(Math.Abs(px1 - expected) < Math.Abs(px0) * 0.01f + 1, "head-on: momentum conserved apart from damping (" + px0.ToString("0") + " -> " + px1.ToString("0") + ", expected " + expected.ToString("0") + ")");
         check(A.Vx < 0 && B.Vx > 0 && Scene.Dist(A, B) >= A.R + B.R, "head-on: they bounce apart");
-        check(loudSeen > 0.5f && loudSeen <= 1f, "head-on at the speed cap: loud bell " + loudSeen.ToString("0.00"));
+        check(loudSeen > 0.5f && loudSeen <= 1f, "head-on at 0.8 of the speed cap: loud bell " + loudSeen.ToString("0.00"));
         var soft = new Scene(new Random(3), bounds); while (soft.Orbs.Count > 2) soft.Orbs.RemoveAt(2);
-        Orb C = soft.Orbs[0], D = soft.Orbs[1]; C.X = 150; C.Y = 120; C.Vx = 0.3f; C.Vy = 0; D.X = 150 + C.R + D.R + 2; D.Y = 120; D.Vx = -0.3f; D.Vy = 0;
+        Orb C = soft.Orbs[0], D = soft.Orbs[1]; C.X = 150; C.Y = 120; C.Vx = 0.15f; C.Vy = 0; D.X = 150 + C.R + D.R + 2; D.Y = 120; D.Vx = -0.15f; D.Vy = 0;
         float softLoud = -1; soft.Struck = (a, b, l) => softLoud = l;
         for (int t = 0; t < 10; t++) soft.Tick();
         check(softLoud > 0 && softLoud < 0.25f, "drifting touch: soft bell " + softLoud.ToString("0.00"));
@@ -364,7 +365,7 @@ static class SelfTest
         // Audio: offline render with two strikes.
         var synth = new Synth(); var buf = new short[Synth.Frames * 2];
         int total = Synth.Rate * 2 / Synth.Frames; float peak = 0; double sumSq = 0; long differ = 0;
-        long strikeAt = -1; int loudestBuffer = -1; double loudest = 0;
+        long strikeAt = -1; double quiet = 0, onset = 0, later = 0;
         synth.SetMotion(0, 220, 4); synth.SetMotion(1, 227, 2);
         for (int i = 0; i < total; i++)
         {
@@ -379,14 +380,14 @@ static class SelfTest
                 bufSq += l * l + r * r; if (buf[n] != buf[n + 1]) differ++;
             }
             sumSq += bufSq;
-            if (i >= 15 && i < 60 && bufSq > loudest) { loudest = bufSq; loudestBuffer = i; }
+            if (i == 19) quiet = bufSq; if (i == 21) onset = bufSq; if (i == 55) later = bufSq;
         }
         float rms = (float)Math.Sqrt(sumSq / (total * Synth.Frames * 2));
         check(peak < 0.99f, "peak below 0.99: " + peak.ToString("0.000"));
         check(rms > 0.01f, "RMS above 0.01: " + rms.ToString("0.000"));
         check(differ > total * Synth.Frames / 2, "left and right differ (binaural): " + differ + " frames");
         check(strikeAt == 20L * Synth.Frames, "strike scheduled at the next rendered frame: " + strikeAt);
-        check(loudestBuffer == 20 || loudestBuffer == 21, "bell is loudest within one buffer of the strike: buffer " + loudestBuffer);
+        check(onset > 10 * quiet && later < onset, "bell is up one buffer after the strike and decays: " + quiet.ToString("0") + " -> " + onset.ToString("0") + " -> " + later.ToString("0"));
         // Sixteen soft strikes in a row: once all eight bell slots are taken, stealing one must not add
         // a click, i.e. the largest sample-to-sample jump must not grow beyond the pre-stealing level.
         var burst = new Synth(); int jumpFree = 0, jumpSteal = 0; short prevL = 0;
@@ -400,9 +401,9 @@ static class SelfTest
                 if (i < 32) jumpFree = Math.Max(jumpFree, jump); else jumpSteal = Math.Max(jumpSteal, jump);
             }
         }
-        // A stolen bell stopping dead would jump about 2700 here (its amplitude times the gain); the tails
+        // A stolen bell stopping dead would jump about 5000 here (its amplitude times the gain); the tails
         // spread that over 10 ms. Allow the natural growth from more voices, but nothing like a click.
-        check(jumpSteal < 1200 && jumpSteal <= jumpFree * 2, "voice stealing does not click: largest jump " + jumpFree + " before stealing, " + jumpSteal + " during");
+        check(jumpSteal < 2300 && jumpSteal <= jumpFree * 2, "voice stealing does not click: largest jump " + jumpFree + " before stealing, " + jumpSteal + " during");
         check(Synth.FlagsOffset == (IntPtr.Size == 8 ? 24 : 16), "WAVEHDR flags offset matches the process bitness: " + Synth.FlagsOffset);
         // The real device, if there is one: the pump must keep rendering past its first queued buffers.
         var live = new Synth();
