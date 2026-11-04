@@ -1,26 +1,21 @@
 """Draws the 'green leaf with water drops' background for the Take skin as one SVG string.
-Run directly to write leaf.svg next to this file for a look; build.py embeds it as a data: URI.
+build.py embeds it as a data: URI.
 Droplets are gradient-only (no per-drop filters) so the image rasterizes fast; the one noise
 filter is a 400px pattern tile, not a full-screen raster."""
-import pathlib
 import random
 
 W, H = 1600, 1000
 
 
+# One water drop at unit size: offset shadow, refracting body, dark rim, caustic, blurred highlight, sharp glint.
+DROP = ("<g id='d'><ellipse rx='1.1' ry='.7' cx='.3' cy='.65' fill='url(#shadow)'/><ellipse rx='1' ry='1' fill='url(#body)'/>"
+        "<ellipse rx='1' ry='1' fill='none' stroke='url(#rim)'/><ellipse rx='.5' ry='.2' cx='.05' cy='.62' fill='url(#caustic)'/>"
+        "<ellipse rx='.42' ry='.3' cx='-.3' cy='-.4' fill='url(#highlight)'/><ellipse rx='.13' ry='.08' cx='-.36' cy='-.5' fill='#fff' opacity='.95'/></g>")
+
+
 def droplet(x, y, r, rng):
-    """One water drop: offset shadow, refracting body, dark rim, blurred highlight, sharp glint."""
-    rx, ry = r, r * rng.uniform(0.95, 1.15)   # slightly taller than wide, like a drop at rest
-    return (
-        f'<g transform="translate({x:.0f} {y:.0f})">'
-        f'<ellipse rx="{rx * 1.1:.1f}" ry="{ry * 0.7:.1f}" cx="{rx * 0.3:.1f}" cy="{ry * 0.65:.1f}" fill="url(#shadow)"/>'
-        f'<ellipse rx="{rx:.1f}" ry="{ry:.1f}" fill="url(#body)"/>'
-        f'<ellipse rx="{rx:.1f}" ry="{ry:.1f}" fill="none" stroke="url(#rim)" stroke-width="{max(1.2, r * 0.07):.1f}"/>'
-        f'<ellipse rx="{rx * 0.5:.1f}" ry="{ry * 0.2:.1f}" cx="{rx * 0.05:.1f}" cy="{ry * 0.62:.1f}" fill="url(#caustic)"/>'
-        f'<ellipse rx="{rx * 0.42:.1f}" ry="{ry * 0.3:.1f}" cx="{-rx * 0.3:.1f}" cy="{-ry * 0.4:.1f}" fill="url(#highlight)"/>'
-        f'<ellipse rx="{rx * 0.13:.1f}" ry="{ry * 0.08:.1f}" cx="{-rx * 0.36:.1f}" cy="{-ry * 0.5:.1f}" fill="#fff" opacity=".95"/>'
-        f'</g>'
-    )
+    ry = r * rng.uniform(0.95, 1.15)   # slightly taller than wide, like a drop at rest
+    return f"<use href='#d' transform='translate({x:.0f} {y:.0f})scale({r} {ry:.1f})' stroke-width='{max(1.2, r * 0.07) / r:.3f}'/>"
 
 
 def veins():
@@ -69,14 +64,10 @@ def svg(seed=7, count=120):
 <pattern id="tile" width="400" height="400" patternUnits="userSpaceOnUse">
 <rect width="400" height="400" filter="url(#cells)"/>
 </pattern>
+{DROP}
 </defs>
 <rect width="{W}" height="{H}" fill="url(#leaf)"/>
 <rect width="{W}" height="{H}" fill="url(#tile)"/>
 <g fill="none" stroke="#e4ff9a" stroke-width="3" opacity=".28" stroke-linecap="round">{veins()}</g>
 {"".join(drops)}
 </svg>"""
-
-
-if __name__ == "__main__":
-    pathlib.Path(__file__).with_name("leaf.svg").write_text(svg(), encoding="utf-8")
-    print("leaf.svg written,", len(svg()) // 1024, "KB")

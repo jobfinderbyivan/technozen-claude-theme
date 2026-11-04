@@ -53,7 +53,7 @@ aside::before, .dframe-sidebar::before {
     radial-gradient(circle at 20px 210px, transparent 9px, rgba(232, 246, 251, 0.3) 10px, transparent 12px),
     radial-gradient(circle at 36px 280px, transparent 3px, rgba(232, 246, 251, 0.35) 4px, transparent 6px);
   background-size: 48px 320px;
-  animation: technozen-rise 18s linear infinite;
+  animation: technozen-rise 18s steps(320) infinite;
 }
 @keyframes technozen-rise { to { transform: translateY(-320px); } }
 @media (prefers-reduced-motion: reduce) { aside::before, .dframe-sidebar::before { animation: none; } }

@@ -35,7 +35,7 @@
     radial-gradient(ellipse 8px 12px at 70% 44%, #f7b8c4 60%, transparent 62%),
     radial-gradient(ellipse 7px 11px at 93% 58%, #fcc9b9 60%, transparent 62%);
   opacity: 0.55;
-  animation: technozen-drift 40s ease-in-out infinite alternate;
+  animation: technozen-drift 40s steps(160) infinite alternate;
 }
 @keyframes technozen-drift { to { transform: translate(-30px, 60px) rotate(6deg); } }
 @media (prefers-reduced-motion: reduce) { &::after { animation: none; } }

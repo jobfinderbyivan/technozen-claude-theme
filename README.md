@@ -58,7 +58,7 @@ python test.py
 
 ## After a Claude update
 
-Claude occasionally renames the CSS variables the theme sets. When that happens the snippet prints a warning in the console: `[technozen] the app is not painting theme colors...`. To fix it, follow the recipe at the end of `NOTES.md` (it uses `css-dump/names.json`, the list of every variable the theme sets), update the mapping table in `build.py`, rebuild, and run the tests.
+Claude occasionally renames the CSS variables the theme sets. When that happens, parts of the app go back to stock colors. To fix it, follow the recipe at the end of `NOTES.md` (it uses `the variable list (`python -c "import build; print(list(build.variables(next(iter(build.THEMES.values())))))"`)`, the list of every variable the theme sets), update the mapping table in `build.py`, rebuild, and run the tests.
 
 ## Colors and skins
 

@@ -1,5 +1,6 @@
 """Checks themes.json and everything build.py generates. Run: python test.py
 Exits 1 on the first group of failures. No dependencies."""
+import colorsys
 import hashlib
 import json
 import math
@@ -29,28 +30,9 @@ def check(ok, message):
         failures.append(message)
 
 
-def hue(hex6):
-    r, g, b = (c / 255 for c in rgb(hex6))
-    mx, mn = max(r, g, b), min(r, g, b)
-    if mx == mn:
-        return 0.0
-    d = mx - mn
-    if mx == r:
-        h = (g - b) / d % 6
-    elif mx == g:
-        h = (b - r) / d + 2
-    else:
-        h = (r - g) / d + 4
-    return h * 60
-
-
 def hue_gap(a, b):
-    d = abs(hue(a) - hue(b)) % 360
+    d = abs(colorsys.rgb_to_hsv(*(c / 255 for c in rgb(a)))[0] - colorsys.rgb_to_hsv(*(c / 255 for c in rgb(b)))[0]) * 360
     return min(d, 360 - d)
-
-
-def rgb_distance(a, b):
-    return math.dist(rgb(a), rgb(b))
 
 
 def test_palette():
@@ -89,7 +71,7 @@ def test_distinct():
         for b in slugs[i + 1:]:
             gap = hue_gap(THEMES[a]["accent"], THEMES[b]["accent"])
             check(gap >= 30, f"{a}/{b}: accent hues only {gap:.0f} degrees apart (need 30)")
-            dist = rgb_distance(THEMES[a]["bg"], THEMES[b]["bg"])
+            dist = math.dist(rgb(THEMES[a]["bg"]), rgb(THEMES[b]["bg"]))
             check(dist >= 10, f"{a}/{b}: backgrounds only {dist:.0f} RGB units apart (need 10)")
 
 
@@ -101,7 +83,7 @@ def test_css():
         skin = build.ROOT / "skins" / f"{slug}.css"
         check(skin.exists(), f"skins/{slug}.css is missing")
         check(f'html[data-technozen="{slug}"][data-technozen-skin="on"] {{' in text, f"css: no skin block for {slug}")
-        nested = build.skin_css(slug).rsplit("\n}\n", 1)[0]  # everything before the hoisted frames
+        nested = build.skin_css(slug).split("\n}\n", 1)[0]  # everything before the hoisted frames
         check("@keyframes" not in nested, f"css: {slug} skin has @keyframes nested inside the theme block (the browser drops those)")
         src = skin.read_text(encoding="utf-8")
         # hooks that no longer exist in the app (see NOTES.md), and :has() which is re-evaluated on every DOM change
@@ -170,7 +152,6 @@ def test_round_trip():
     for slug, t in THEMES.items():
         for k in TOKENS:
             h, s, l = (float(x.rstrip("%")) for x in triplet(t[k]).split())
-            import colorsys
             back = tuple(round(c * 255) for c in colorsys.hls_to_rgb(h / 360, l / 100, s / 100))
             check(all(abs(a - b) <= 1 for a, b in zip(back, rgb(t[k]))), f"{slug}.{k}: HSL round trip drifted to {back}")
 

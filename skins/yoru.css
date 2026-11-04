@@ -54,7 +54,7 @@ nav, aside, .dframe-sidebar {
   z-index: -1;
   pointer-events: none;
   background: radial-gradient(70% 160% at 50% 110%, rgba(242, 179, 91, 0.28), transparent 70%);
-  animation: technozen-breathe 7s ease-in-out infinite alternate;
+  animation: technozen-breathe 7s steps(24) infinite alternate;
 }
 @keyframes technozen-breathe { from { opacity: 0.75; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { [data-cds="ChatComposer"]::before { animation: none; } }
