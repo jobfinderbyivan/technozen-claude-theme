@@ -206,11 +206,20 @@ class Watcher : ApplicationContext
         using (new Mutex(true, MutexName, out created))
         {
             if (!created) return; // one helper is enough
+            AppDomain.CurrentDomain.UnhandledException += (s, e) => Log("CRASH " + e.ExceptionObject);
+            Application.ThreadException += (s, e) => Log("UI ERROR " + e.Exception);
+            Log("helper started " + Snippet.Version);
             Application.Run(new Watcher());
         }
     }
 
-    Watcher() { poll.Tick += (s, e) => { try { Tick(); } catch { } }; poll.Start(); }
+    // helper.log next to the EXE: what the helper saw and did, for when it misbehaves on someone's PC.
+    public static void Log(string line)
+    {
+        try { File.AppendAllText(Path.Combine(Paths.InstallDir(), "helper.log"), DateTime.Now.ToString("HH:mm:ss.fff ") + line + "\r\n"); } catch { }
+    }
+
+    Watcher() { poll.Tick += (s, e) => { try { Tick(); } catch (Exception ex) { Log("tick error " + ex.Message); } }; poll.Start(); }
 
     void Tick()
     {
@@ -231,6 +240,7 @@ class Watcher : ApplicationContext
                 if (!fresh && !waiting) { handled[p.Id] = true; return; }
                 pid = p.Id; since = Stopwatch.StartNew(); mainWindow = IntPtr.Zero; injecting = false;
                 loader = new Loader(); loader.Show();
+                Log("claude " + pid + " seen, card shown");
             }
             foreach (int old in new List<int>(handled.Keys)) try { Process.GetProcessById(old); } catch { handled.Remove(old); }
             return;
@@ -239,23 +249,31 @@ class Watcher : ApplicationContext
         foreach (var w in Native.WindowsOf(pid))
         {
             if (Native.IsDevToolsTitle(w.Key)) devtools = w.Value;
-            else if (mainWindow == IntPtr.Zero) { mainWindow = w.Value; Native.ShowWindow(mainWindow, Native.SW_HIDE); loader.Status("hiding the white..."); }
+            else if (mainWindow == IntPtr.Zero) { mainWindow = w.Value; Native.ShowWindow(mainWindow, Native.SW_HIDE); loader.Status("hiding the white..."); Log("main window '" + w.Key + "' hidden"); }
         }
         if (devtools != IntPtr.Zero && !injecting)
         {
             injecting = true;
             Native.SetWindowPos(devtools, IntPtr.Zero, -32000, -32000, 0, 0, Native.SWP_NOSIZE | Native.SWP_NOZORDER | Native.SWP_NOACTIVATE); // parked off-screen, still focusable
             loader.Status("pouring the theme in...");
-            var t = new Thread(() => { bool ok = Inject(devtools); loader.BeginInvoke((Action)(() => Finish(ok))); });
+            Log("devtools window found after " + since.ElapsedMilliseconds + " ms, injecting");
+            var t = new Thread(() =>
+            {
+                bool ok = false;
+                try { ok = Inject(devtools); } catch (Exception ex) { Log("inject error " + ex); }
+                Log("inject " + (ok ? "ok" : "failed"));
+                try { loader.BeginInvoke((Action)(() => Finish(ok))); } catch (Exception ex) { Log("finish error " + ex.Message); }
+            });
             t.SetApartmentState(ApartmentState.STA);
             t.Start();
         }
-        else if (!injecting && since.Elapsed.TotalSeconds > 40) Finish(false); // DevTools never came: show Claude anyway
-        else if (!injecting && Paths.AppProcesses().Length == 0) Finish(false); // Claude quit during startup
+        else if (!injecting && since.Elapsed.TotalSeconds > 40) { Log("devtools never appeared"); Finish(false); } // show Claude anyway
+        else if (!injecting && Paths.AppProcesses().Length == 0) { Log("claude quit during startup"); Finish(false); }
     }
 
     void Finish(bool ok)
     {
+        Log("finish ok=" + ok + " after " + since.ElapsedMilliseconds + " ms");
         handled[pid] = true;
         if (mainWindow != IntPtr.Zero) { Native.ShowWindow(mainWindow, Native.SW_SHOW); Native.SetForegroundWindow(mainWindow); }
         loader.Status(ok ? "ready" : "could not apply; opening Claude");
