@@ -256,10 +256,11 @@ class Watcher : ApplicationContext
             injecting = true;
             Native.SetWindowPos(devtools, IntPtr.Zero, -32000, -32000, 0, 0, Native.SWP_NOSIZE | Native.SWP_NOZORDER | Native.SWP_NOACTIVATE); // parked off-screen, still focusable
             Log("devtools window found after " + since.ElapsedMilliseconds + " ms, injecting");
+            IntPtr main = mainWindow;
             var t = new Thread(() =>
             {
                 bool ok = false;
-                try { ok = Inject(devtools); } catch (Exception ex) { Log("inject error " + ex); }
+                try { ok = Inject(devtools, main); } catch (Exception ex) { Log("inject error " + ex); }
                 Log("inject " + (ok ? "ok" : "failed"));
                 try { loader.BeginInvoke((Action)(() => Finish(ok))); } catch (Exception ex) { Log("finish error " + ex.Message); }
             });
@@ -279,17 +280,25 @@ class Watcher : ApplicationContext
         pid = 0; injecting = false;
     }
 
-    // Paste the theme into the DevTools console. Returns false when the window could not be focused.
-    static bool Inject(IntPtr devtools)
+    // The theme appends a zero-width space to document.title when it runs; that is the proof it ran.
+    static bool ThemeRan(IntPtr main)
     {
-        Thread.Sleep(1500); // let the DevTools frontend finish loading
-        for (int attempt = 0; attempt < 8; attempt++)
+        var sb = new StringBuilder(256); Native.GetWindowText(main, sb, sb.Capacity);
+        return sb.ToString().EndsWith("​");
+    }
+
+    // Paste the theme into the DevTools console, then check it ran; retry otherwise. Keystrokes can land
+    // in the wrong place while DevTools is still loading, which is why the check matters.
+    static bool Inject(IntPtr devtools, IntPtr main)
+    {
+        Thread.Sleep(2000); // let the DevTools frontend finish loading
+        for (int attempt = 0; attempt < 6; attempt++)
         {
             try { Clipboard.SetText(Snippet.Text); } catch { Thread.Sleep(500); continue; }
             Native.SetForegroundWindow(devtools);
             Thread.Sleep(300);
             if (Native.GetForegroundWindow() != devtools) { SendKeys.SendWait("%"); Native.SetForegroundWindow(devtools); Thread.Sleep(300); } // the Alt tap lifts Windows' foreground lock
-            if (Native.GetForegroundWindow() != devtools) { Thread.Sleep(700); continue; }
+            if (Native.GetForegroundWindow() != devtools) { Log("devtools not in front, retrying"); Thread.Sleep(700); continue; }
             // Command menu > "Show Console" puts the cursor in the console prompt whatever panel was open.
             SendKeys.SendWait("^+p"); Thread.Sleep(500);
             SendKeys.SendWait("Show Console"); Thread.Sleep(400);
@@ -301,9 +310,11 @@ class Watcher : ApplicationContext
             SendKeys.SendWait("allow pasting{ENTER}"); Thread.Sleep(500);
             SendKeys.SendWait("^v"); Thread.Sleep(900);
             SendKeys.SendWait("{ENTER}"); Thread.Sleep(900);
+            if (main != IntPtr.Zero && !ThemeRan(main)) { Log("no marker after attempt " + (attempt + 1) + ", retrying"); Thread.Sleep(1000); continue; }
             Native.PostMessage(devtools, Native.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
             return true;
         }
+        Native.PostMessage(devtools, Native.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
         return false;
     }
 }
