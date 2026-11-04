@@ -1,0 +1,18 @@
+{
+  "name": "Technozen Mizu Glass",
+  "base": "dark",
+  "overrides": {
+    "claude": "#2ED3C4",
+    "claudeShimmer": "#8BE4E0",
+    "promptBorder": "#2ED3C4",
+    "promptBorderShimmer": "#8BE4E0",
+    "permission": "#8FE36B",
+    "permissionShimmer": "#8BE4E0",
+    "planMode": "#8FE36B",
+    "suggestion": "#2ED3C4",
+    "selectionBg": "#1E6A8C",
+    "userMessageBackground": "#123A55",
+    "userMessageBackgroundHover": "#1E6A8C",
+    "composerSidebarBackground": "#123A55"
+  }
+}

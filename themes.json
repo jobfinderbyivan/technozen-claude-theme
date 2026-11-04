@@ -1,0 +1,62 @@
+{
+  "shiro": {
+    "name": "Shiro Ceramic",
+    "mode": "light",
+    "bg": "#FFFFFF",
+    "surface": "#F3F5F7",
+    "text": "#2B2F33",
+    "muted": "#646B72",
+    "accent": "#1E7FD3",
+    "accent2": "#AEB6BD",
+    "border": "#DDE2E6",
+    "glow": "#CFEAF7"
+  },
+  "take": {
+    "name": "Take Karesansui",
+    "mode": "light",
+    "bg": "#F2F1E6",
+    "surface": "#FBFAF3",
+    "text": "#2E3A33",
+    "muted": "#5E6B5A",
+    "accent": "#3A8236",
+    "accent2": "#B8A98A",
+    "border": "#D3D6C8",
+    "glow": "#B9E0B0"
+  },
+  "sakura": {
+    "name": "Sakura Mokuzai",
+    "mode": "light",
+    "bg": "#FCEFEF",
+    "surface": "#FFF8F7",
+    "text": "#4A3A3A",
+    "muted": "#866E6C",
+    "accent": "#BC4E68",
+    "accent2": "#9C7A66",
+    "border": "#EBD3D1",
+    "glow": "#FCC9B9"
+  },
+  "mizu": {
+    "name": "Mizu Glass",
+    "mode": "dark",
+    "bg": "#0B2A3F",
+    "surface": "#123A55",
+    "text": "#E8F6FB",
+    "muted": "#9CC2D4",
+    "accent": "#2ED3C4",
+    "accent2": "#8FE36B",
+    "border": "#1F5478",
+    "glow": "#1E6A8C"
+  },
+  "yoru": {
+    "name": "Yoru Lantern",
+    "mode": "dark",
+    "bg": "#16181D",
+    "surface": "#1F2229",
+    "text": "#ECEEF2",
+    "muted": "#9A9FA8",
+    "accent": "#F2B35B",
+    "accent2": "#8FB3C9",
+    "border": "#2C3038",
+    "glow": "#3A3320"
+  }
+}
