@@ -310,11 +310,11 @@ class Watcher : ApplicationContext
             loader.Progress(0.2f);
             Log("devtools window found after " + since.ElapsedMilliseconds + " ms, injecting");
             InputShield.On();
-            IntPtr main = mainWindow; Loader card = loader;
+            Loader card = loader;
             var t = new Thread(() =>
             {
                 bool ok = false;
-                try { ok = Inject(devtools, main, card.Progress); } catch (Exception ex) { Log("inject error " + ex); }
+                try { ok = Inject(devtools, card.Progress); } catch (Exception ex) { Log("inject error " + ex); }
                 Log("inject " + (ok ? "ok" : "failed"));
                 try { loader.BeginInvoke((Action)(() => Finish(ok))); } catch (Exception ex) { Log("finish error " + ex.Message); }
             });
@@ -335,22 +335,24 @@ class Watcher : ApplicationContext
         pid = 0; injecting = false;
     }
 
-    // The theme appends a zero-width space to document.title when it runs; that is the proof it ran.
-    static bool ThemeRan(IntPtr main)
+    // Proof the theme ran: the pasted text ends with a call to the console's own copy(), which puts a
+    // per-start stamp on the clipboard once the snippet has evaluated without throwing. (Claude's main
+    // process blocks page titles from reaching the window title, so document.title cannot carry it.)
+    static bool ThemeRan(string stamp)
     {
-        var sb = new StringBuilder(256); Native.GetWindowText(main, sb, sb.Capacity);
-        return sb.ToString().EndsWith("​");
+        try { return Clipboard.GetText() == stamp; } catch { return false; }
     }
 
     // Paste the theme into the DevTools console, then check it ran; retry otherwise. Keystrokes can land
     // in the wrong place while DevTools is still loading, which is why the check matters.
-    static bool Inject(IntPtr devtools, IntPtr main, Action<float> progress)
+    static bool Inject(IntPtr devtools, Action<float> progress)
     {
         Thread.Sleep(2000); // let the DevTools frontend finish loading
         for (int attempt = 0; attempt < 4; attempt++)
         {
             progress(0.2f);
-            try { Clipboard.SetText(Snippet.Text); } catch { Thread.Sleep(500); continue; }
+            string stamp = "technozen-ran-" + DateTime.Now.Ticks;
+            try { Clipboard.SetText(Snippet.Text + "\n;typeof copy === \"function\" && copy(\"" + stamp + "\");\n"); } catch { Thread.Sleep(500); continue; }
             Native.SetForegroundWindow(devtools);
             Thread.Sleep(300);
             if (Native.GetForegroundWindow() != devtools) { SendKeys.SendWait("%"); Native.SetForegroundWindow(devtools); Thread.Sleep(300); } // the Alt tap lifts Windows' foreground lock
@@ -367,7 +369,7 @@ class Watcher : ApplicationContext
             progress(0.6f);
             SendKeys.SendWait("{ENTER}"); Thread.Sleep(1500);
             progress(0.8f);
-            if (main != IntPtr.Zero && !ThemeRan(main))
+            if (!ThemeRan(stamp))
             {
                 // The first paste ever into this DevTools shows a self-XSS warning instead of pasting;
                 // "allow pasting" answers it, then the paste is repeated.
@@ -377,7 +379,8 @@ class Watcher : ApplicationContext
                 SendKeys.SendWait("{ENTER}"); Thread.Sleep(1500);
             }
             progress(0.9f);
-            if (main != IntPtr.Zero && !ThemeRan(main)) { Log("still no marker, retrying"); Thread.Sleep(1000); continue; }
+            if (!ThemeRan(stamp)) { Log("still no marker, retrying"); Thread.Sleep(1000); continue; }
+            Log("theme ran: clipboard stamp seen");
             progress(1f);
             Native.PostMessage(devtools, Native.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
             return true;

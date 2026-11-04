@@ -22,7 +22,6 @@
     html.dataset.technozen = slug;
     html.dataset.mode = THEMES[slug].mode; // a few non-variable rules (icons, scrollbars) key off data-mode
     localStorage.setItem("technozen", slug);
-    document.title = document.title.replace(/​/g, "") + "​"; // invisible marker the Windows helper reads to confirm the theme ran
     clearTimeout(checkTimer);
     checkTimer = setTimeout(check, 300);
     sync();
