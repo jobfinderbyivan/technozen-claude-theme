@@ -160,6 +160,7 @@ def snippet():
                     "paint": ["rgb(%d, %d, %d)" % rgb(t[k]) for k in ("bg", "surface")]}
              for slug, t in THEMES.items()}
     template = (ROOT / "snippet.template.js").read_text(encoding="utf-8")
+    template = "".join(line for line in template.splitlines(True) if "BUILD-STRIP" not in line)  # template-only guard
     # json.dumps makes the CSS a plain quoted string, so no backtick or ${} escaping to get wrong.
     return template.replace("__THEMES__", json.dumps(paint)).replace("__CSS__", json.dumps(css()))
 
