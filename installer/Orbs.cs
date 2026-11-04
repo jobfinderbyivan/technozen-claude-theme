@@ -155,7 +155,22 @@ class Synth : IDisposable
     readonly float[] delayL = new float[LookAhead], delayR = new float[LookAhead];
     int delayPos, holdLeft; float limiterPeak, limiterGain = 1, fade = 1, fadeStep;
 
-    // The card is closing: ramp to silence so the sound never stops dead.
+    // True once the hum and every bell have died away to about -60 dB.
+    public bool Quiet
+    {
+        get
+        {
+            lock (gate)
+            {
+                foreach (float a in mAmp) if (a > 1e-3f) return false;
+                foreach (float a in bAmp) if (a > 1e-3f) return false;
+                foreach (float a in tAmp) if (a > 1e-3f) return false;
+                return true;
+            }
+        }
+    }
+
+    // The sound is over: a last short ramp so even the faint end never stops dead.
     public void FadeOut() { lock (gate) fadeStep = 1f / (0.25f * Rate); }
 
     public void SetMotion(int voice, float freq, float speed)

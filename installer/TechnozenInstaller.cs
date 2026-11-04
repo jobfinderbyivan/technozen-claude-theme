@@ -475,8 +475,15 @@ partial class Loader : Form
         MouseLeave += (s, e) => { scene.MouseX = -1e6f; scene.MouseY = -1e6f; };
         FormClosed += (s, e) =>
         {
-            pumping = false; synth.Dispose();
-            Watcher.Log("audio: " + synth.Underruns + " gaps, " + synth.FailedWrites + " failed writes");
+            pumping = false;
+            // The sound outlives the card: the hum dies away and the bells ring out, then the device closes.
+            for (int i = 0; i < scene.Orbs.Count; i++) synth.SetMotion(i, scene.Orbs[i].Freq, 0);
+            new Thread(() =>
+            {
+                for (int waited = 0; waited < 20000 && !synth.Quiet; waited += 100) Thread.Sleep(100); // bounded: without a sound device nothing ever decays
+                synth.FadeOut(); Thread.Sleep(400); synth.Dispose();
+                Watcher.Log("audio: " + synth.Underruns + " gaps, " + synth.FailedWrites + " failed writes");
+            }) { IsBackground = true }.Start();
             Watcher.Log("graphics: " + FrameReport());
             gfx.Dispose(); scanlineBrush.Dispose(); DeleteDC(mem); DeleteDC(src);
             DeleteObject(back); DeleteObject(scenery); DeleteObject(wordmark); foreach (IntPtr h in sprites) DeleteObject(h);
@@ -538,7 +545,7 @@ partial class Loader : Form
         get { var cp = base.CreateParams; cp.ExStyle |= 0x08000000 | 0x00000008; return cp; } // WS_EX_NOACTIVATE | WS_EX_TOPMOST
     }
 
-    public void FadeOut() { if (!fading) fadeStart = clock.Elapsed.TotalSeconds; fading = true; synth.FadeOut(); }
+    public void FadeOut() { if (!fading) fadeStart = clock.Elapsed.TotalSeconds; fading = true; }
 
     void Tickle()
     {
@@ -548,7 +555,7 @@ partial class Loader : Form
         if (steps > 0) for (int i = 0; i < scene.Orbs.Count; i++) synth.SetMotion(i, scene.Orbs[i].Freq, scene.Orbs[i].Speed);
         if (fading)
         {
-            double o = 1 - (now - fadeStart) / 0.4; // 400 ms, longer than the sound's fade plus its queue
+            double o = 1 - (now - fadeStart) / 0.4; // 400 ms
             if (o <= 0.05) { closing = true; pumping = false; Close(); } else Opacity = o;
         }
     }

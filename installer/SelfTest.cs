@@ -274,6 +274,12 @@ static class SelfTest
         closing.FadeOut(); int closeJump = 0; short prevClose = 0; float closeEnd = 0;
         for (int i = 0; i < 15; i++) { closing.Render(buf); for (int n = 0; n < buf.Length; n += 2) { if (n > 0 || i > 0) closeJump = Math.Max(closeJump, Math.Abs(buf[n] - prevClose)); prevClose = buf[n]; if (i == 14) closeEnd = Math.Max(closeEnd, Math.Abs(buf[n])); } }
         check(closeEnd == 0 && closeJump < 2500, "closing fades to silence in 300 ms: end level " + closeEnd + ", largest step " + closeJump);
+        // After the card closes: the hum stops at once, the hardest bell is still ringing 5 s later and has died away within 20 s.
+        var tail = new Synth(); tail.SetMotion(0, 220, Scene.MaxSpeed); for (int i = 0; i < 20; i++) tail.Render(buf);
+        tail.Strike(220, 226, 1f); tail.SetMotion(0, 220, 0);
+        int tailBuffers = 0; double level5s = 0;
+        while (!tail.Quiet && tailBuffers < 1000) { tail.Render(buf); tailBuffers++; if (tailBuffers == 250) foreach (short v in buf) level5s = Math.Max(level5s, Math.Abs(v) / 32768.0); }
+        check(level5s > 0.01 && tailBuffers < 1000, "bell rings out: level " + level5s.ToString("0.000") + " after 5 s, quiet after " + (tailBuffers * 0.02).ToString("0.0") + " s");
         // The real device, if there is one: the pump must keep rendering past its first queued buffers.
         var live = new Synth();
         if (live.Start())
