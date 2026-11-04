@@ -8,8 +8,9 @@
 <link rel="stylesheet" href="dist/technozen.css">
 <style>
   body { margin: 0; min-height: 100vh; font-family: system-ui, sans-serif; color: var(--cds-text-primary); background: var(--cds-page-bg); }
-  nav { position: fixed; inset: 0 auto 0 0; width: 240px; padding: 16px; box-sizing: border-box; background: var(--cds-fizzy-lake-color-sidebar); }
-  main { margin-left: 240px; padding: 32px; display: flex; flex-direction: column; gap: 24px; max-width: 760px; }
+  aside { position: fixed; inset: 0 auto 0 0; width: 240px; padding: 16px; box-sizing: border-box; background: var(--cds-fizzy-lake-color-sidebar); overflow: hidden; }
+  .dframe-content { margin-left: 240px; background: var(--df-bg-page); min-height: 100vh; }
+  main { padding: 32px; display: flex; flex-direction: column; gap: 24px; max-width: 760px; }
   .item { padding: 8px 12px; border-radius: 10px; margin-bottom: 4px; }
   .item.selected { background: var(--cds-fill-ghost-selected); }
   [data-cds="Panel"] { padding: 20px; background: var(--cds-surface-3); }
@@ -26,12 +27,14 @@
 </style>
 </head>
 <body class="bg-surface-1">
-<nav>
-  <div class="item">New chat</div>
-  <div class="item selected">Technozen for Claude</div>
-  <div class="item">Earlier conversation</div>
-  <div class="item">Another one</div>
-</nav>
+<div class="dframe-root" data-variant="web">
+<aside class="dframe-sidebar"><nav>
+  <div class="item" data-row>New chat</div>
+  <div class="item selected" data-row data-selected>Technozen for Claude</div>
+  <div class="item" data-row>Earlier conversation</div>
+  <div class="item" data-row>Another one</div>
+</nav></aside>
+<div class="dframe-content">
 <main>
   <h1>Question what's next</h1>
   <div data-cds="Panel">
@@ -46,8 +49,12 @@
   <p>This is Claude's reply, sitting straight on the page. It should stay readable on every background.</p>
   <pre><code>def hello():
     return "world"</code></pre>
-  <div class="ProseMirror" contenteditable="true">Reply to Claude...</div>
+  <div data-cds="ChatComposer"><div class="ProseMirror tiptap" contenteditable="true">Reply to Claude...</div></div>
+  <h2>A heading inside a dialog</h2>
+  <div data-cds="Dialog" role="dialog" style="padding: 16px; background: var(--cds-surface-popover)"><h2 style="margin: 0 0 8px">Dialog title</h2><p>Dialog body text, and <span style="color: var(--cds-text-secondary)">secondary text</span>.</p></div>
 </main>
+</div>
+</div>
 <div class="switch">
   <button onclick="setTheme('shiro')">shiro</button><button onclick="setTheme('take')">take</button><button onclick="setTheme('sakura')">sakura</button><button onclick="setTheme('mizu')">mizu</button><button onclick="setTheme('yoru')">yoru</button>
   <button onclick="h.dataset.technozenSkin = h.dataset.technozenSkin === 'on' ? 'off' : 'on'">skin</button>

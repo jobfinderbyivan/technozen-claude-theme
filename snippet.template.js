@@ -50,7 +50,10 @@
     const theme = THEMES[html.dataset.technozen];
     if (!theme) return;
     const els = [html, document.body, ...document.querySelectorAll("main, nav, aside, [data-cds='Panel'], .dframe-sidebar")];
+    const skinWas = html.dataset.technozenSkin;
+    html.dataset.technozenSkin = "off"; // skins paint gradients and glass; measure the plain colors underneath
     const painted = [...new Set(els.map(el => getComputedStyle(el).backgroundColor))];
+    html.dataset.technozenSkin = skinWas; // restored before the next paint, so nothing flashes
     if (!painted.some(c => theme.paint.includes(c))) {
       console.warn("[technozen] the app is not painting theme colors; its variables may have been renamed. Painted:", painted);
     }

@@ -145,9 +145,12 @@ def skin_css(slug):
         import leaf
         text = text.replace("__LEAF__", "data:image/svg+xml," + urllib.parse.quote(leaf.svg(), safe="/:=.,;' -_()"))
     # @keyframes cannot sit inside a nested rule (the parser drops them), so they are hoisted out.
-    frames = re.findall(r"@keyframes[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}", text)
+    # Comments go first so a "@keyframes" mentioned in prose cannot be mistaken for a rule.
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    frames = re.findall(r"(?m)^@keyframes[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}", text)
     for frame in frames:
         text = text.replace(frame, "")
+    assert "@keyframes" not in text, f"skins/{slug}.css: a @keyframes block could not be hoisted"
     return f'html[data-technozen="{slug}"][data-technozen-skin="on"] {{\n{text}\n}}\n' + "\n".join(frames)
 
 

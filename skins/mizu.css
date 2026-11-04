@@ -38,11 +38,13 @@ nav, aside, .dframe-sidebar, [data-cds="Panel"], [data-cds="Card"] > .cds-card-f
 /* Bubble rings rising along the sidebar's left edge. */
 aside, .dframe-sidebar {
   position: relative;
+  overflow: hidden;
 }
+/* One tile taller than the sidebar and moved with transform, so the animation stays on the compositor. */
 aside::before, .dframe-sidebar::before {
   content: "";
   position: absolute;
-  inset: 0 auto 0 0;
+  inset: 0 auto -320px 0;
   width: 48px;
   pointer-events: none;
   background:
@@ -53,7 +55,7 @@ aside::before, .dframe-sidebar::before {
   background-size: 48px 320px;
   animation: technozen-rise 18s linear infinite;
 }
-@keyframes technozen-rise { to { background-position-y: -320px; } }
+@keyframes technozen-rise { to { transform: translateY(-320px); } }
 @media (prefers-reduced-motion: reduce) { aside::before, .dframe-sidebar::before { animation: none; } }
 /* Buttons: capsules that glow instead of casting shadows. */
 [data-cds="Button"] {

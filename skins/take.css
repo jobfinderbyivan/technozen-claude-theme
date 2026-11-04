@@ -6,6 +6,11 @@
 /* Surfaces go translucent so the leaf shows through everything. */
 &, & * {
   --df-bg-page: transparent !important;
+  --cds-page-bg: transparent !important;
+  --background-color-page: transparent !important;
+  --cds-surface-1: transparent !important;
+  --cds-surface-2: transparent !important;
+  --cds-neutral-0: transparent !important;
   --cds-fizzy-lake-color-sidebar: rgba(255, 255, 255, 0.42) !important;
   --df-sidebar-bg: rgba(255, 255, 255, 0.42) !important;
   --df-web-sidebar-bg: rgba(255, 255, 255, 0.42) !important;
@@ -24,15 +29,21 @@
   --cds-border: rgba(255, 255, 255, 0.6) !important;
   --cds-border-line: rgba(255, 255, 255, 0.6) !important;
   --cds-text-primary: #263028 !important;
+  --cds-text-secondary: #34433a !important;   /* darker than the palette: it sits on the leaf itself */
+  --cds-text-muted: #34433a !important;
 }
 
 /* The leaf goes on <html>; the app paints its page color on body and on these containers,
-   so they become transparent to let it through. */
+   so they become transparent to let it through. The chat column keeps a light wash so text
+   crossing a droplet stays readable. */
 & {
   background: #7fd130 url("__LEAF__") center / cover fixed !important;
 }
-.bg-surface-1, .bg-surface-2, .dframe-root, .dframe-content, .dframe-pane, main {
+.bg-surface-1, .bg-surface-2, .dframe-root, .dframe-content, .dframe-pane {
   background-color: transparent !important;
+}
+main {
+  background-color: rgba(255, 255, 255, 0.38) !important;
 }
 
 /* Frosted-glass panels. Blur is costly, so only the few big surfaces get it. */
@@ -112,10 +123,9 @@ nav, aside, .dframe-sidebar, [data-cds="Dialog"], [role="dialog"], [data-cds-pop
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 6px 14px rgba(0, 60, 0, 0.22);
 }
 
-/* Headlines as wet, glossy text. */
+/* Headlines get a wet highlight but keep their dark color, so dialog and reply headings stay readable. */
 h1, h2 {
-  color: #f4ffe4 !important;
-  text-shadow: 0 1px 0 #fff, 0 2px 0 rgba(255, 255, 255, 0.5), 0 3px 10px rgba(0, 60, 0, 0.55), 0 -1px 0 rgba(0, 40, 0, 0.3);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.8), 0 2px 6px rgba(255, 255, 255, 0.5);
 }
 
 /* Code blocks stay readable. */

@@ -24,7 +24,7 @@
   content: "";
   position: fixed;
   inset: 0;
-  z-index: 0;
+  z-index: -1; /* above html's own paper background, below everything in body */
   pointer-events: none;
   background:
     radial-gradient(ellipse 9px 13px at 82% 8%, #fcc9b9 60%, transparent 62%),

@@ -101,8 +101,8 @@ def test_css():
         skin = build.ROOT / "skins" / f"{slug}.css"
         check(skin.exists(), f"skins/{slug}.css is missing")
         check(f'html[data-technozen="{slug}"][data-technozen-skin="on"] {{' in text, f"css: no skin block for {slug}")
-        block = build.skin_css(slug).split("\n}\n", 1)[0]
-        check("@keyframes" not in block, f"css: {slug} skin has @keyframes nested inside the theme block (the browser drops those)")
+        nested = build.skin_css(slug).rsplit("\n}\n", 1)[0]  # everything before the hoisted frames
+        check("@keyframes" not in nested, f"css: {slug} skin has @keyframes nested inside the theme block (the browser drops those)")
         src = skin.read_text(encoding="utf-8")
         # hooks that no longer exist in the app (see NOTES.md), and :has() which is re-evaluated on every DOM change
         for stale in ("data-radix", 'data-testid="user-message"', "data-user-message-bubble", "data-frame-mode", "button.cds-reset", ":has("):

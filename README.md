@@ -21,7 +21,7 @@ The desktop app has no theme setting yet ([anthropics/claude-code#79305](https:/
 - **Ctrl+Alt+T** cycles to the next theme. **Ctrl+Alt+S** switches the skin off and on (skin off = colors only, Claude's own shapes). **Ctrl+Alt+0** removes everything.
 - Your choice is remembered. After restarting Claude: Ctrl+Shift+I, Console, press the **Up arrow** to recall the snippet, Enter. It comes back in the theme you left it in. (If you prefer, save it under DevTools > Sources > Snippets and run it with Ctrl+Enter.)
 - From the DevTools console you can also run `technozen.apply("mizu")` or `technozen.remove()`.
-- If you change Claude's own Appearance setting while a theme is on, press Ctrl+Alt+T to re-apply.
+- If you change Claude's own Appearance setting while a theme is on, cycle Ctrl+Alt+T back round to your theme, or run `technozen.apply("take")` in the console.
 
 ## Install on claude.ai in a browser
 
