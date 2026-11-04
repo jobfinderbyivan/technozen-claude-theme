@@ -19,8 +19,9 @@ class Orb
 
 class Scene
 {
-    public const float Step = 1f / 60f, MaxSpeed = 14f, MouseForce = 9000f, Restitution = 0.92f, WallRestitution = 0.9f, Damping = 0.995f;
-    public const float MinClosingSpeed = 0.4f; // px per step; slower touches do not ring
+    // Heavy, slow glass: half the speed of the first version, more drag, and mass growing faster than area.
+    public const float Step = 1f / 60f, MaxSpeed = 7f, MouseForce = 4500f, Restitution = 0.9f, WallRestitution = 0.85f, Damping = 0.99f;
+    public const float MinClosingSpeed = 0.2f; // px per step; slower touches do not ring
     public readonly List<Orb> Orbs = new List<Orb>();
     public readonly List<float[]> Hits = new List<float[]>(); // x, y, age (starts negative so the flash lands when the bell is heard)
     public RectangleF Bounds;
@@ -36,7 +37,7 @@ class Scene
         for (int i = 0; i < 5; i++) for (int j = 0; j < 5; j++) lastRing[i, j] = -1000;
         int count = 4 + rng.Next(2);
         Color[] tints = { Color.FromArgb(120, 230, 255), Color.FromArgb(196, 242, 120), Color.FromArgb(200, 170, 255), Color.FromArgb(150, 200, 240), Color.FromArgb(255, 190, 220) };
-        var radii = new List<float>(); for (int i = 0; i < count; i++) radii.Add(34 + rng.Next(37));
+        var radii = new List<float>(); for (int i = 0; i < count; i++) radii.Add(26 + rng.Next(52)); // 26 to 77 px: a clear small-to-large spread
         radii.Sort((a, b) => b.CompareTo(a)); // largest placed first, so the small ones fill the gaps
         // Fundamentals a laptop speaker can play, 4 to 7 Hz apart so every pair beats audibly (widest pair under 30 Hz).
         float f = 180 + (float)rng.NextDouble() * 420;
@@ -61,8 +62,8 @@ class Scene
                 }
             }
             o.X = bestX; o.Y = bestY;
-            o.Mass = o.R * o.R;
-            double a = rng.NextDouble() * Math.PI * 2; float v = 0.6f + (float)rng.NextDouble() * 1.2f;
+            o.Mass = (float)Math.Pow(o.R, 2.5);
+            double a = rng.NextDouble() * Math.PI * 2; float v = 0.3f + (float)rng.NextDouble() * 0.6f;
             o.Vx = (float)Math.Cos(a) * v; o.Vy = (float)Math.Sin(a) * v;
             Orbs.Add(o);
         }
@@ -98,10 +99,10 @@ class Scene
                 bool first = !touching[i, j]; touching[i, j] = true;
                 if (!first || -vrel < MinClosingSpeed || step - lastRing[i, j] < 18) continue;
                 lastRing[i, j] = step;
-                // Loudness from the closing speed, a little heavier for big pairs: a gentle drift is a soft bell,
-                // a mouse-flung orb is a full strike.
-                float size = 0.6f + 0.4f * (float)Math.Sqrt(1 / (ia + ib) / 2450f);
-                float loud = Math.Min(1f, -vrel / (2 * MaxSpeed) * 2.2f * size);
+                // Loudness from the closing speed, heavier for big pairs, with a curve that keeps drifts
+                // soft and lets a hard mouse-flung hit go all the way: force decides the volume.
+                float size = 0.6f + 0.4f * (float)Math.Min(1, Math.Sqrt(1 / (ia + ib) / 30000f));
+                float loud = Math.Min(1f, (float)Math.Pow(-vrel / (1.6f * MaxSpeed), 1.3) * 1.3f * size);
                 Collisions++;
                 Hits.Add(new[] { a.X + nx * a.R, a.Y + ny * a.R, -0.25f });
                 if (Struck != null) Struck(a, b, loud);
@@ -143,7 +144,7 @@ class Synth : IDisposable
     static readonly float TailDecay = (float)Math.Exp(-1.0 / (0.01 * Rate));
     readonly object gate = new object();
     long rendered; // absolute frames rendered so far; a strike starts at the next frame rendered
-    const float Attack = 1f / (0.06f * Rate), Release = 1f / (0.3f * Rate), BellAttackFrames = 0.015f * Rate, MasterGain = 0.6f, Silent = 3e-5f;
+    const float Attack = 1f / (0.06f * Rate), Release = 1f / (0.3f * Rate), BellAttackFrames = 0.015f * Rate, MasterGain = 0.75f, Silent = 3e-5f;
 
     public void SetMotion(int voice, float freq, float speed)
     {
@@ -174,7 +175,7 @@ class Synth : IDisposable
                 for (int side = 0; side < 2; side++)
                 {
                     int k = side * Partials + p; float f = (side == 0 ? fA : fB) * PartialRatio[p];
-                    bInc[slot, k] = f / Rate; bAmp[slot, k] = PartialAmp[p] * loud * 0.5f; // phases continue: no step in the waveform
+                    bInc[slot, k] = f / Rate; bAmp[slot, k] = PartialAmp[p] * loud * 0.7f; // phases continue: no step in the waveform
                     bDecay[slot, k] = (float)Math.Exp(-1.0 / (PartialDecay[p] * Rate));
                 }
             bStart[slot] = rendered; bActive[slot] = true;
@@ -311,13 +312,18 @@ static class SelfTest
         var pair = new Scene(new Random(3), bounds);
         while (pair.Orbs.Count > 2) pair.Orbs.RemoveAt(2);
         Orb A = pair.Orbs[0], B = pair.Orbs[1];
-        A.X = 150; A.Y = 120; A.Vx = 6; A.Vy = 0; B.X = 150 + A.R + B.R + 8; B.Y = 120; B.Vx = -6; B.Vy = 0;
+        A.X = 150; A.Y = 120; A.Vx = 3.5f; A.Vy = 0; B.X = 150 + A.R + B.R + 8; B.Y = 120; B.Vx = -3.5f; B.Vy = 0;
         float px0 = A.Mass * A.Vx + B.Mass * B.Vx; float loudSeen = -1; pair.Struck = (a, b, l) => loudSeen = l;
         for (int t = 0; t < 10; t++) pair.Tick();
         float px1 = A.Mass * A.Vx + B.Mass * B.Vx, expected = px0 * (float)Math.Pow(Scene.Damping, 10); // damping takes its share each step; the collision must take none
         check(Math.Abs(px1 - expected) < Math.Abs(px0) * 0.01f + 1, "head-on: momentum conserved apart from damping (" + px0.ToString("0") + " -> " + px1.ToString("0") + ", expected " + expected.ToString("0") + ")");
         check(A.Vx < 0 && B.Vx > 0 && Scene.Dist(A, B) >= A.R + B.R, "head-on: they bounce apart");
-        check(loudSeen > 0.5f && loudSeen <= 1f, "head-on at 12 px/step closing: loud bell " + loudSeen.ToString("0.00"));
+        check(loudSeen > 0.5f && loudSeen <= 1f, "head-on at the speed cap: loud bell " + loudSeen.ToString("0.00"));
+        var soft = new Scene(new Random(3), bounds); while (soft.Orbs.Count > 2) soft.Orbs.RemoveAt(2);
+        Orb C = soft.Orbs[0], D = soft.Orbs[1]; C.X = 150; C.Y = 120; C.Vx = 0.3f; C.Vy = 0; D.X = 150 + C.R + D.R + 2; D.Y = 120; D.Vx = -0.3f; D.Vy = 0;
+        float softLoud = -1; soft.Struck = (a, b, l) => softLoud = l;
+        for (int t = 0; t < 10; t++) soft.Tick();
+        check(softLoud > 0 && softLoud < 0.25f, "drifting touch: soft bell " + softLoud.ToString("0.00"));
 
         // Repulsion: a parked cursor pushes the orbs away.
         var rep = new Scene(new Random(5), bounds); rep.MouseX = 230; rep.MouseY = 120;

@@ -347,7 +347,7 @@ class Watcher : ApplicationContext
     static bool Inject(IntPtr devtools, IntPtr main, Action<float> progress)
     {
         Thread.Sleep(2000); // let the DevTools frontend finish loading
-        for (int attempt = 0; attempt < 6; attempt++)
+        for (int attempt = 0; attempt < 4; attempt++)
         {
             progress(0.2f);
             try { Clipboard.SetText(Snippet.Text); } catch { Thread.Sleep(500); continue; }
@@ -357,21 +357,27 @@ class Watcher : ApplicationContext
             if (Native.GetForegroundWindow() != devtools) { Log("devtools not in front, retrying"); Thread.Sleep(700); continue; }
             progress(0.3f);
             // Command menu > "Show Console" puts the cursor in the console prompt whatever panel was open.
-            SendKeys.SendWait("^+p"); Thread.Sleep(500);
-            SendKeys.SendWait("Show Console"); Thread.Sleep(400);
-            SendKeys.SendWait("{ENTER}"); Thread.Sleep(600);
+            SendKeys.SendWait("^+p"); Thread.Sleep(600);
+            SendKeys.SendWait("Show Console"); Thread.Sleep(500);
+            SendKeys.SendWait("{ENTER}"); Thread.Sleep(800);
             progress(0.45f);
-            // DevTools blocks the first paste ever with a self-XSS warning until "allow pasting" is typed.
-            // Paste, answer the warning, paste again: with the warning the first paste is empty and the
-            // second runs; without it the first attempt becomes a syntax error (runs nothing) and the second runs.
-            SendKeys.SendWait("^v"); Thread.Sleep(500);
+            // Paste and run. The waits are generous: Claude is still starting and the console has to
+            // digest 130 KB before Enter means anything.
+            SendKeys.SendWait("^v"); Thread.Sleep(1500);
             progress(0.6f);
-            SendKeys.SendWait("allow pasting{ENTER}"); Thread.Sleep(500);
-            SendKeys.SendWait("^v"); Thread.Sleep(900);
+            SendKeys.SendWait("{ENTER}"); Thread.Sleep(1500);
             progress(0.8f);
-            SendKeys.SendWait("{ENTER}"); Thread.Sleep(900);
+            if (main != IntPtr.Zero && !ThemeRan(main))
+            {
+                // The first paste ever into this DevTools shows a self-XSS warning instead of pasting;
+                // "allow pasting" answers it, then the paste is repeated.
+                Log("no marker after attempt " + (attempt + 1) + "; answering the paste warning and pasting again");
+                SendKeys.SendWait("allow pasting{ENTER}"); Thread.Sleep(800);
+                SendKeys.SendWait("^v"); Thread.Sleep(1500);
+                SendKeys.SendWait("{ENTER}"); Thread.Sleep(1500);
+            }
             progress(0.9f);
-            if (main != IntPtr.Zero && !ThemeRan(main)) { Log("no marker after attempt " + (attempt + 1) + ", retrying"); Thread.Sleep(1000); continue; }
+            if (main != IntPtr.Zero && !ThemeRan(main)) { Log("still no marker, retrying"); Thread.Sleep(1000); continue; }
             progress(1f);
             Native.PostMessage(devtools, Native.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
             return true;
@@ -409,7 +415,7 @@ class Loader : Form
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.CenterScreen;
         AutoScaleMode = AutoScaleMode.None;
-        scale = DeviceDpi / 96f;
+        scale = DeviceDpi / 96f * 1.25f; // the card is laid out at 460x300 and shown a quarter larger
         ClientSize = new Size((int)(W * scale), (int)(H * scale));
         TopMost = true;
         ShowInTaskbar = true;
