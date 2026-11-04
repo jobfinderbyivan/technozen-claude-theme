@@ -14,12 +14,12 @@ Five Technozen themes for the Claude desktop app and claude.ai, switchable with 
 
 The desktop app has no theme setting yet ([anthropics/claude-code#79305](https://github.com/anthropics/claude-code/issues/79305) tracks it), so the theme is a small script you run once per launch from the app's own developer tools.
 
-1. In Claude: **Help > Troubleshooting > Enable Developer Mode**. Then press **Ctrl+Shift+I** (Cmd+Option+I on Mac) to open DevTools.
-2. In DevTools: **Sources > Snippets > + New snippet**. Paste the whole of [`dist/technozen.snippet.js`](dist/technozen.snippet.js), then press **Ctrl+Enter** to run it.
+1. In Claude: **Help > Troubleshooting > Enable Developer Mode** (once). Then press **Ctrl+Shift+I** (Cmd+Option+I on Mac) to open DevTools.
+2. Click the **Console** tab, paste the whole of [`dist/technozen.snippet.js`](dist/technozen.snippet.js), press **Enter**. Close DevTools.
 3. Done. The app is now in Shiro Ceramic.
 
 - **Ctrl+Alt+T** cycles to the next theme. **Ctrl+Alt+0** removes the theme.
-- Your choice is remembered. After restarting Claude, open DevTools and run the snippet again (Ctrl+Enter); it comes back in the theme you left it in.
+- Your choice is remembered. After restarting Claude: Ctrl+Shift+I, Console, press the **Up arrow** to recall the snippet, Enter. It comes back in the theme you left it in. (If you prefer, save it under DevTools > Sources > Snippets and run it with Ctrl+Enter.)
 - From the DevTools console you can also run `technozen.apply("mizu")` or `technozen.remove()`.
 - If you change Claude's own Appearance setting while a theme is on, press Ctrl+Alt+T to re-apply.
 
