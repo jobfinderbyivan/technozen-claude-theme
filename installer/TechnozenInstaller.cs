@@ -418,7 +418,7 @@ class Loader : Form
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.CenterScreen;
         AutoScaleMode = AutoScaleMode.None;
-        scale = DeviceDpi / 96f * 1.5625f; // the card is laid out at 460x300 and shown at 1.25 x 1.25 of that
+        scale = DeviceDpi / 96f * Scene.CardScale; // the card is laid out at 460x300 and shown at 1.25 x 1.25 of that
         ClientSize = new Size((int)(W * scale), (int)(H * scale));
         TopMost = true;
         ShowInTaskbar = true;
@@ -427,7 +427,7 @@ class Loader : Form
         DoubleBuffered = true;
         using (var path = Rounded(new RectangleF(0, 0, Width, Height), 30 * scale)) Region = new Region(path);
         scene = new Scene(new Random(seed), new RectangleF(18, 18, W - 36, H - 36));
-        scene.Struck = (a, b, loud) => synth.Strike(a.Freq, b.Freq, loud);
+        scene.Struck = (a, b, loud) => { synth.Strike(a.Freq, a.Freq + a.Beat, loud * 0.6f); synth.Strike(b.Freq, b.Freq + b.Beat, loud * 0.6f); }; // both bowls ring
         sprites = new Bitmap[scene.Orbs.Count];
         for (int i = 0; i < sprites.Length; i++) sprites[i] = OrbSprite(scene.Orbs[i], scale);
         scanlines = new Bitmap(Width, Height + 3);
@@ -436,7 +436,7 @@ class Loader : Form
         anim.Tick += (s, e) => { Tickle(); Invalidate(); };
         MouseMove += (s, e) => { scene.MouseX = e.X / scale; scene.MouseY = e.Y / scale; };
         MouseLeave += (s, e) => { scene.MouseX = -1e6f; scene.MouseY = -1e6f; };
-        FormClosed += (s, e) => synth.Dispose();
+        FormClosed += (s, e) => { synth.Dispose(); Watcher.Log("audio: " + synth.Underruns + " gaps, " + synth.FailedWrites + " failed writes"); };
     }
 
     // Called once the card is shown: opens the sound device and starts animating. --demo never calls it.
@@ -454,7 +454,7 @@ class Loader : Form
         get { var cp = base.CreateParams; cp.ExStyle |= 0x08000000 | 0x00000008; return cp; } // WS_EX_NOACTIVATE | WS_EX_TOPMOST
     }
 
-    public void FadeOut() { fading = true; }
+    public void FadeOut() { fading = true; synth.FadeOut(); }
 
     void Tickle()
     {
@@ -508,9 +508,9 @@ class Loader : Form
         using (var path = Rounded(fill, 2)) using (var b = new LinearGradientBrush(bar, c1, c2, 0f)) g.FillPath(b, path);
         // Scanlines (pre-drawn, drifting) and a slow bright band like a CRT refresh.
         g.ResetTransform();
-        g.DrawImage(scanlines, 0, (int)(t * 40) % 3 - 3);
+        g.DrawImage(scanlines, 0, (int)(t * 12) % 3 - 3);
         g.Transform = saved;
-        int band = (int)(t * 90) % (H + 60) - 30;
+        int band = (int)(t * 30) % (H + 60) - 30;
         using (var sweep = new LinearGradientBrush(new Rectangle(0, band, W, 30), Color.FromArgb(0, 255, 255, 255), Color.FromArgb(30, 255, 255, 255), 90f)) g.FillRectangle(sweep, 0, band, W, 30);
     }
 

@@ -1,9 +1,9 @@
 // The singing glass orbs on the start-up card: a tiny physics scene and a tiny stereo synth.
-// Physics: 4 or 5 glass spheres with mass, walls, elastic collisions, and the mouse as reverse gravity.
-// Audio: each orb hums its own fundamental while it moves; a collision strikes a singing-bowl bell
-// with the left ear on one orb's fundamental and the right ear on the other's (true binaural), as
-// loud as the closing speed. Sines from a table, exponential decays as multiplies, a tanh limiter:
-// nothing heavier than that, so it runs anywhere.
+// Physics: 3 or 4 glass spheres with mass, walls, soft collisions, and the mouse as a gentle reverse gravity.
+// Audio: an orb's pitch is inversely proportional to its radius, on a pentatonic scale so any two agree.
+// Each orb hums while it moves; a collision rings both orbs' bowls, each with the right ear a few Hz
+// above the left (true binaural), as loud as the closing speed. Sines from a table, exponential decays
+// as multiplies, one clean limiter: nothing heavier than that, so it runs anywhere.
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -12,16 +12,18 @@ using System.Threading;
 
 class Orb
 {
-    public float X, Y, Vx, Vy, R, Mass, Freq;
+    public float X, Y, Vx, Vy, R, Mass, Freq, Beat;
     public Color Tint;
     public float Speed { get { return (float)Math.Sqrt(Vx * Vx + Vy * Vy); } }
 }
 
 class Scene
 {
-    // Heavy, slow glass: half the speed of the first version, more drag, and mass growing faster than area.
-    public const float Step = 1f / 60f, MaxSpeed = 3.5f, MouseForce = 2250f, Restitution = 0.9f, WallRestitution = 0.85f, Damping = 0.99f;
-    public const float MinClosingSpeed = 0.2f; // px per step; slower touches do not ring
+    // Zen: orbs float. The cap is rarely reached, pushes ease in over a second, and contacts are soft.
+    public const float Step = 1f / 60f, MaxSpeed = 1f, MousePush = 0.012f, Restitution = 0.6f, WallRestitution = 0.85f, Damping = 0.997f, Drift = 0.08f; // drag only acts above the slow drift speed
+    public const float CardScale = 1.5625f; // device pixels per design unit at 96 DPI
+    public const float HardHit = 0.2f; // a re-bounce this hard rings even before the pair has separated
+    public const float MinClosingSpeed = 0.03f; // px per step; slower touches do not ring
     public readonly List<Orb> Orbs = new List<Orb>();
     public readonly List<float[]> Hits = new List<float[]>(); // x, y, age (starts negative so the flash lands when the bell is heard)
     public RectangleF Bounds;
@@ -35,16 +37,17 @@ class Scene
     {
         Bounds = bounds;
         for (int i = 0; i < 5; i++) for (int j = 0; j < 5; j++) lastRing[i, j] = -1000;
-        int count = 4 + rng.Next(2);
+        int count = 3 + rng.Next(2);
         Color[] tints = { Color.FromArgb(120, 230, 255), Color.FromArgb(196, 242, 120), Color.FromArgb(200, 170, 255), Color.FromArgb(150, 200, 240), Color.FromArgb(255, 190, 220) };
-        var radii = new List<float>(); for (int i = 0; i < count; i++) radii.Add(26 + rng.Next(52)); // 26 to 77 px: a clear small-to-large spread
-        radii.Sort((a, b) => b.CompareTo(a)); // largest placed first, so the small ones fill the gaps
-        // Fundamentals a laptop speaker can play, 4 to 7 Hz apart so every pair beats audibly (widest pair under 30 Hz).
-        float f = 180 + (float)rng.NextDouble() * 420;
+        // Radii are the largest (77) over a major pentatonic ratio, so pitch = pitchTimesRadius / radius lands on the
+        // scale. One from each band of the scale: always a low, a high and something between, largest placed first.
+        float[] ratios = { 1f, 9f / 8, 5f / 4, 3f / 2, 5f / 3, 2f, 9f / 4, 5f / 2, 3f };
+        var radii = new List<float>();
+        for (int i = 0; i < count; i++) { int lo = i * ratios.Length / count, hi = (i + 1) * ratios.Length / count; radii.Add(77 / ratios[lo + rng.Next(hi - lo)]); }
+        float pitchTimesRadius = (180 + (float)rng.NextDouble() * 40) * 77; // largest orb at 180 to 220 Hz: a different key each boot
         for (int i = 0; i < count; i++)
         {
-            var o = new Orb { R = radii[i], Tint = tints[(i + rng.Next(5)) % 5], Freq = f };
-            f += 4 + (float)rng.NextDouble() * 3;
+            var o = new Orb { R = radii[i], Tint = tints[(i + rng.Next(5)) % 5], Beat = 4 + (float)rng.NextDouble() * 3 };
             // Random spots until one is clear; if the face is crowded, shrink and try again; at the
             // smallest size take the spot with the least overlap (the physics separates the rest).
             float bestX = 0, bestY = 0, bestOverlap = float.MaxValue;
@@ -63,7 +66,8 @@ class Scene
             }
             o.X = bestX; o.Y = bestY;
             o.Mass = (float)Math.Pow(o.R, 3); // volume: a big orb is many times heavier than a small one
-            double a = rng.NextDouble() * Math.PI * 2; float v = 0.15f + (float)rng.NextDouble() * 0.3f;
+            o.Freq = pitchTimesRadius / o.R; // set after placement, which may have shrunk it
+            double a = rng.NextDouble() * Math.PI * 2; float v = Drift + (float)rng.NextDouble() * 0.07f;
             o.Vx = (float)Math.Cos(a) * v; o.Vy = (float)Math.Sin(a) * v;
             Orbs.Add(o);
         }
@@ -76,11 +80,11 @@ class Scene
         step++;
         foreach (var o in Orbs)
         {
-            float dx = o.X - MouseX, dy = o.Y - MouseY, d2 = dx * dx + dy * dy + 400;
-            // Heavy orbs answer the cursor sluggishly: the push is scaled by the square root of a mid-size orb's mass over this one's.
-            if (d2 < 250000) { float a = MouseForce / d2 * (float)Math.Sqrt(125000 / o.Mass), d = (float)Math.Sqrt(d2); o.Vx += a * dx / d; o.Vy += a * dy / d; }
-            o.Vx *= Damping; o.Vy *= Damping;
-            float s = o.Speed; if (s > MaxSpeed) { o.Vx *= MaxSpeed / s; o.Vy *= MaxSpeed / s; }
+            // The push fades with distance from the orb's surface and shrinks with its size, so big orbs lean away slowly.
+            float dx = o.X - MouseX, dy = o.Y - MouseY, d = Math.Max(0.01f, (float)Math.Sqrt(dx * dx + dy * dy)), gap = Math.Max(0, d - o.R);
+            if (gap < 160) { float a = MousePush * (float)Math.Pow(50 / o.R, 1.5) * 1600 / (gap * gap + 1600); o.Vx += a * dx / d; o.Vy += a * dy / d; }
+            float s = o.Speed; if (s > Drift) { float k = Math.Max(Damping, Drift / s); o.Vx *= k; o.Vy *= k; s *= k; }
+            if (s > MaxSpeed) { o.Vx *= MaxSpeed / s; o.Vy *= MaxSpeed / s; }
             o.X += o.Vx; o.Y += o.Vy;
         }
         for (int i = 0; i < Orbs.Count; i++)
@@ -97,15 +101,15 @@ class Scene
                 if (vrel >= 0) continue; // already separating
                 float jn = -(1 + Restitution) * vrel / (ia + ib);
                 a.Vx -= jn * ia * nx; a.Vy -= jn * ia * ny; b.Vx += jn * ib * nx; b.Vy += jn * ib * ny;
-                bool first = !touching[i, j]; touching[i, j] = true;
-                if (!first || -vrel < MinClosingSpeed || step - lastRing[i, j] < 18) continue;
+                bool first = !touching[i, j]; if (-vrel >= MinClosingSpeed) touching[i, j] = true;
+                if ((!first && -vrel < HardHit) || -vrel < MinClosingSpeed || step - lastRing[i, j] < 18) continue;
                 lastRing[i, j] = step;
                 // Loudness from the closing speed, heavier for big pairs, with a curve that keeps drifts
                 // soft and lets a hard mouse-flung hit go all the way: force decides the volume.
                 float size = 0.6f + 0.4f * (float)Math.Min(1, Math.Sqrt(1 / (ia + ib) / 150000f));
                 float loud = Math.Min(1f, (float)Math.Pow(-vrel / (1.2f * MaxSpeed), 1.5) * 1.5f * size);
                 Collisions++;
-                Hits.Add(new[] { a.X + nx * a.R, a.Y + ny * a.R, -0.25f });
+                Hits.Add(new[] { a.X + nx * a.R, a.Y + ny * a.R, -0.3f });
                 if (Struck != null) Struck(a, b, loud);
             }
         foreach (var o in Orbs) // walls last, so a collision can never leave an orb outside the face
@@ -129,8 +133,8 @@ class Scene
 
 class Synth : IDisposable
 {
-    public const int Rate = 48000, Frames = 960, Buffers = 3; // 20 ms buffers, 60 ms queued
-    const int MaxMotion = 5, MaxBells = 8, Partials = 4;
+    public const int Rate = 48000, Frames = 960, Buffers = 4; // 20 ms buffers, 80 ms queued
+    const int MaxMotion = 5, MaxBells = 12, Partials = 4; // a collision takes two bells, one per orb
     static readonly float[] PartialRatio = { 1f, 2f, 2.76f, 4.07f }, PartialAmp = { 1f, 0.5f, 0.25f, 0.12f }, PartialDecay = { 2.0f, 1.4f, 0.9f, 0.6f };
     static readonly float[] Sine = BuildSine();
     static float[] BuildSine() { var t = new float[4096]; for (int i = 0; i < t.Length; i++) t[i] = (float)Math.Sin(i * Math.PI * 2 / t.Length); return t; }
@@ -145,11 +149,20 @@ class Synth : IDisposable
     static readonly float TailDecay = (float)Math.Exp(-1.0 / (0.01 * Rate));
     readonly object gate = new object();
     long rendered; // absolute frames rendered so far; a strike starts at the next frame rendered
-    const float Attack = 1f / (0.06f * Rate), Release = 1f / (0.3f * Rate), BellAttackFrames = 0.015f * Rate, MasterGain = 1f, Silent = 3e-5f;
+    const float Attack = 1f / (0.3f * Rate), Release = 1f / (0.8f * Rate), BellAttackFrames = 0.015f * Rate, MasterGain = 0.5f, Silent = 3e-5f;
+    // The limiter turns the whole stereo mix down together instead of bending the waveform: it sees a crest
+    // 10 ms before it is heard and glides there, holding 50 ms so the crest pattern of two notes cannot shake the gain.
+    const float Ceiling = 0.85f; const int LookAhead = 480, Hold = 2400;
+    static readonly float LimiterFall = (float)Math.Exp(-1.0 / (0.25 * Rate)), LimiterGlide = (float)(1 - Math.Exp(-1.0 / (0.002 * Rate)));
+    readonly float[] delayL = new float[LookAhead], delayR = new float[LookAhead];
+    int delayPos, holdLeft; float limiterPeak, limiterGain = 1, fade = 1, fadeStep;
+
+    // The card is closing: ramp to silence so the sound never stops dead.
+    public void FadeOut() { lock (gate) fadeStep = 1f / (0.25f * Rate); }
 
     public void SetMotion(int voice, float freq, float speed)
     {
-        lock (gate) { mInc[voice] = freq / Rate; mTarget[voice] = Math.Min(1f, speed / 6f) * 0.12f; }
+        lock (gate) { mInc[voice] = freq / Rate; mTarget[voice] = Math.Min(1f, speed / Scene.MaxSpeed) * 0.1f; }
     }
 
     public long Strike(float fA, float fB, float loud)
@@ -176,7 +189,9 @@ class Synth : IDisposable
                 for (int side = 0; side < 2; side++)
                 {
                     int k = side * Partials + p; float f = (side == 0 ? fA : fB) * PartialRatio[p];
-                    bInc[slot, k] = f / Rate; bAmp[slot, k] = PartialAmp[p] * loud; // phases continue: no step in the waveform
+                    bInc[slot, k] = f / Rate; bAmp[slot, k] = PartialAmp[p] * loud;
+                    for (int i = 0; i < MaxBells; i++) // the same pitch already ringing: join its phase so the two add, never cancel
+                        if (i != slot && bActive[i] && Math.Abs(bInc[i, k] - bInc[slot, k]) < 1e-7f) { bPhase[slot, k] = bPhase[i, k]; break; }
                     bDecay[slot, k] = (float)Math.Exp(-1.0 / (PartialDecay[p] * Rate));
                 }
             bStart[slot] = rendered; bActive[slot] = true;
@@ -222,8 +237,15 @@ class Synth : IDisposable
                         tPhase[b, k] += tInc[b, k]; if (tPhase[b, k] >= 1) tPhase[b, k] -= 1;
                         tAmp[b, k] = a * TailDecay;
                     }
-                buf[2 * n] = (short)(Math.Tanh(l * MasterGain) * 32000);
-                buf[2 * n + 1] = (short)(Math.Tanh(r * MasterGain) * 32000);
+                l *= MasterGain; r *= MasterGain;
+                float peak = Math.Max(Math.Abs(l), Math.Abs(r));
+                if (peak >= limiterPeak) { limiterPeak = peak; holdLeft = Hold; } else if (holdLeft > 0) holdLeft--; else limiterPeak *= LimiterFall;
+                limiterGain += ((limiterPeak > Ceiling ? Ceiling / limiterPeak : 1) - limiterGain) * LimiterGlide;
+                fade = Math.Max(0, fade - fadeStep);
+                float gain = limiterGain * fade, outL = delayL[delayPos] * gain, outR = delayR[delayPos] * gain;
+                delayL[delayPos] = l; delayR[delayPos] = r; delayPos = (delayPos + 1) % LookAhead;
+                buf[2 * n] = (short)(Math.Max(-1f, Math.Min(1f, outL)) * 32767);
+                buf[2 * n + 1] = (short)(Math.Max(-1f, Math.Min(1f, outR)) * 32767);
             }
             rendered += Frames;
         }
@@ -242,6 +264,7 @@ class Synth : IDisposable
     [DllImport("winmm.dll")] static extern int waveOutReset(IntPtr h);
     [DllImport("winmm.dll")] static extern int waveOutClose(IntPtr h);
     IntPtr device; IntPtr[] headers; IntPtr[] data; Thread pump; volatile bool running;
+    public volatile int Underruns, FailedWrites; // underrun: the device played out everything queued, an audible gap
     readonly short[] work = new short[Frames * 2];
 
     public bool Start()
@@ -258,7 +281,7 @@ class Synth : IDisposable
             waveOutPrepareHeader(device, headers[i], Marshal.SizeOf(typeof(WaveHdr)));
         }
         running = true;
-        pump = new Thread(Pump) { IsBackground = true, Priority = ThreadPriority.AboveNormal };
+        pump = new Thread(Pump) { IsBackground = true, Priority = ThreadPriority.Highest };
         pump.Start();
         return true;
     }
@@ -273,7 +296,9 @@ class Synth : IDisposable
             if (!running) break;
             Render(work);
             Marshal.Copy(work, 0, data[i], work.Length);
-            if (waveOutWrite(device, headers[i], Marshal.SizeOf(typeof(WaveHdr))) != 0) { Thread.Sleep(20); continue; }
+            int newest = (i + Buffers - 1) % Buffers; // checked last, so a stall while rendering counts too
+            if (queued[newest] && (Marshal.ReadInt32(headers[newest], FlagsOffset) & 1) != 0) Underruns++;
+            if (waveOutWrite(device, headers[i], Marshal.SizeOf(typeof(WaveHdr))) != 0) { FailedWrites++; Thread.Sleep(20); continue; }
             queued[i] = true; i = (i + 1) % Buffers;
         }
     }
@@ -291,6 +316,37 @@ class Synth : IDisposable
 // --selftest <report.txt>: physics and audio checks without a desktop.
 static class SelfTest
 {
+    // Amplitude of one frequency in a sample run (Goertzel with a Hann window, so neighbouring partials do not leak in).
+    static double Tone(List<float> x, double freq)
+    {
+        double w = 2 * Math.PI * freq / Synth.Rate, c = 2 * Math.Cos(w), s1 = 0, s2 = 0;
+        for (int i = 0; i < x.Count; i++) { double s0 = x[i] * (0.5 - 0.5 * Math.Cos(2 * Math.PI * i / x.Count)) + c * s1 - s2; s2 = s1; s1 = s0; }
+        return Math.Sqrt(s1 * s1 + s2 * s2 - c * s1 * s2) + 1e-12;
+    }
+    // A collision as the card plays it: both bowls at 0.6. Returns peak and RMS over a second, left ear.
+    static double[] Hit(float loud, short[] buf)
+    {
+        var y = new Synth(); y.Strike(220, 226, loud * 0.6f); y.Strike(330, 335, loud * 0.6f); double p = 0, sq = 0; int count = 0;
+        for (int i = 0; i < 50; i++) { y.Render(buf); for (int n = 0; n < buf.Length; n += 2) { double v = buf[n] / 32768.0; p = Math.Max(p, Math.Abs(v)); sq += v * v; count++; } }
+        return new[] { p, Math.Sqrt(sq / count) };
+    }
+    // Loudest energy at frequencies no partial of a 200 Hz and a 300 Hz bowl occupies, relative to the 200 Hz fundamental.
+    static double Products(List<float> x)
+    {
+        double worst = 0; foreach (double f in new[] { 178.0, 250.0, 700.0, 1000.0 }) worst = Math.Max(worst, Tone(x, f));
+        return 20 * Math.Log10(worst / Tone(x, 200));
+    }
+    static List<float> Collide(float loud, int repeatAfter, short[] buf)
+    {
+        var y = new Synth(); var x = new List<float>();
+        for (int i = 0; i < 40; i++)
+        {
+            if (i == 0 || i == repeatAfter) { y.Strike(200, 206, loud * 0.6f); y.Strike(300, 305, loud * 0.6f); }
+            y.Render(buf); if (i >= 2 + Math.Max(0, repeatAfter) && i < 22 + Math.Max(0, repeatAfter)) for (int n = 0; n < buf.Length; n += 2) x.Add(buf[n] / 32768f);
+        }
+        return x;
+    }
+
     public static int Run(string reportPath)
     {
         var lines = new List<string>(); int failures = 0;
@@ -305,20 +361,20 @@ static class SelfTest
             if (s.MaxOverlap() > 1) bad++;
             foreach (var o in s.Orbs) if (o.X - o.R < bounds.Left || o.X + o.R > bounds.Right || o.Y - o.R < bounds.Top || o.Y + o.R > bounds.Bottom) bad++;
             for (int i = 0; i < s.Orbs.Count; i++) for (int j = i + 1; j < s.Orbs.Count; j++)
-                { float d = Math.Abs(s.Orbs[i].Freq - s.Orbs[j].Freq); if (d < 3 || d > 30) bad++; }
+                { Orb x = s.Orbs[i], y = s.Orbs[j]; if (Math.Abs(x.Freq * x.R / (y.Freq * y.R) - 1) > 0.001 || x.Freq < 150 || x.Freq > 800 || x.Beat < 4 || x.Beat > 7) bad++; }
         }
-        check(bad == 0, "2000 seeds: no overlap over 1 px at start, inside the face, every pair beats at 3 to 30 Hz (bad: " + bad + ")");
+        check(bad == 0, "2000 seeds: no overlap over 1 px at start, inside the face, pitch inversely proportional to size, 150 to 800 Hz, 4 to 7 Hz binaural (bad: " + bad + ")");
 
         // Two orbs head on: momentum conserved, they separate, and the bell is as loud as the closing speed says.
         var pair = new Scene(new Random(3), bounds);
         while (pair.Orbs.Count > 2) pair.Orbs.RemoveAt(2);
         Orb A = pair.Orbs[0], B = pair.Orbs[1];
-        A.X = 150; A.Y = 120; A.Vx = 0.4f * Scene.MaxSpeed; A.Vy = 0; B.X = 150 + A.R + B.R + 8; B.Y = 120; B.Vx = -0.4f * Scene.MaxSpeed; // under the cap even after the lighter one recoils B.Vy = 0;
+        A.X = 150; A.Y = 120; A.Vx = 0.4f * Scene.MaxSpeed; A.Vy = 0; B.X = 150 + A.R + B.R + 8; B.Y = 120; B.Vx = -0.4f * Scene.MaxSpeed; B.Vy = 0; // under the cap even after the lighter one recoils
         float px0 = A.Mass * A.Vx + B.Mass * B.Vx; float loudSeen = -1; pair.Struck = (a, b, l) => loudSeen = l;
-        for (int t = 0; t < 10; t++) pair.Tick();
-        float px1 = A.Mass * A.Vx + B.Mass * B.Vx, expected = px0 * (float)Math.Pow(Scene.Damping, 10); // damping takes its share each step; the collision must take none
+        for (int t = 0; t < 30; t++) pair.Tick();
+        float px1 = A.Mass * A.Vx + B.Mass * B.Vx, expected = px0 * (float)Math.Pow(Scene.Damping, 30); // damping takes its share each step; the collision must take none
         check(Math.Abs(px1 - expected) < Math.Abs(px0) * 0.01f + 1, "head-on: momentum conserved apart from damping (" + px0.ToString("0") + " -> " + px1.ToString("0") + ", expected " + expected.ToString("0") + ")");
-        check(A.Vx < 0 && B.Vx > 0 && Scene.Dist(A, B) >= A.R + B.R, "head-on: they bounce apart");
+        check(B.Vx > A.Vx && Scene.Dist(A, B) >= A.R + B.R, "head-on: they separate after the hit");
         check(loudSeen > 0.5f && loudSeen <= 1f, "head-on at 0.8 of the speed cap: loud bell " + loudSeen.ToString("0.00"));
         var soft = new Scene(new Random(3), bounds); while (soft.Orbs.Count > 2) soft.Orbs.RemoveAt(2);
         Orb C = soft.Orbs[0], D = soft.Orbs[1]; C.X = 150; C.Y = 120; C.Vx = 0.15f; C.Vy = 0; D.X = 150 + C.R + D.R + 2; D.Y = 120; D.Vx = -0.15f; D.Vy = 0;
@@ -352,15 +408,63 @@ static class SelfTest
         check(!outside, "orbs stay inside the face");
         check(scene.Energy() <= eRest, "energy at rest only decays: " + eRest.ToString("0") + " -> " + scene.Energy().ToString("0"));
         check(scene.MaxOverlap() <= 0.5f, "no overlap at the end: " + scene.MaxOverlap().ToString("0.00") + " px");
-        check(scene.Collisions > 0 && scene.Collisions < 120, "strikes in 10 s with a sweeping cursor: " + scene.Collisions);
+        check(scene.Collisions > 0 && scene.Collisions < 30, "strikes in 10 s with a sweeping cursor: " + scene.Collisions);
         check(strikes.Count > 0 && strikes.TrueForAll(l => l >= 0.0f && l <= 1), "strike loudness in [0,1]");
 
         // Pinned by a parked cursor against the wall: contact-based ringing means it rings once, not every 150 ms.
-        var pin = new Scene(new Random(2), bounds); int rings = 0; pin.Struck = (a, b, l) => rings++;
+        var pin = new Scene(new Random(2), bounds); while (pin.Orbs.Count > 2) pin.Orbs.RemoveAt(2); int rings = 0; pin.Struck = (a, b, l) => rings++;
         pin.Orbs[0].X = bounds.Left + pin.Orbs[0].R; pin.Orbs[0].Y = 120; pin.Orbs[1].X = pin.Orbs[0].X + pin.Orbs[0].R + pin.Orbs[1].R + 2; pin.Orbs[1].Y = 120;
         pin.MouseX = pin.Orbs[1].X + pin.Orbs[1].R + 30; pin.MouseY = 120;
         for (int t = 0; t < 300; t++) pin.Tick();
-        check(rings <= 10, "pinned pair rings at most every 300 ms in 5 s: " + rings);
+        check(rings <= 2, "a pair held together by the cursor rings at most twice in 5 s: " + rings);
+
+
+        // Zen: measured in what the eye sees, device pixels per second at 96 DPI.
+        float pxPerSec = Scene.CardScale * 60;
+        var counts = new HashSet<int>(); for (int seed = 0; seed < 200; seed++) counts.Add(new Scene(new Random(seed), bounds).Orbs.Count);
+        check(counts.Count == 2 && counts.Contains(3) && counts.Contains(4), "3 or 4 orbs per boot");
+        // Over many boots on the card's real face, with a sweeping cursor: what the eye sees per frame, and how rarely the cap is touched.
+        var face = new RectangleF(18, 18, 424, 264); float fastest = 0; double speedSum = 0; long speedN = 0, atCap = 0;
+        for (int seed = 0; seed < 50; seed++)
+        {
+            var calm = new Scene(new Random(seed), face); var lastX = new float[4]; var lastY = new float[4];
+            for (int t = 0; t < 600; t++)
+            {
+                for (int i = 0; i < calm.Orbs.Count; i++) { lastX[i] = calm.Orbs[i].X; lastY[i] = calm.Orbs[i].Y; }
+                calm.MouseX = 20 + t * 0.7f; calm.MouseY = 150 + (float)Math.Sin(t / 25f) * 90; calm.Tick();
+                for (int i = 0; i < calm.Orbs.Count; i++)
+                {
+                    float dx = calm.Orbs[i].X - lastX[i], dy = calm.Orbs[i].Y - lastY[i], moved = (float)Math.Sqrt(dx * dx + dy * dy);
+                    fastest = Math.Max(fastest, moved); speedSum += moved; speedN++; if (moved >= Scene.MaxSpeed * 0.98f) atCap++;
+                }
+            }
+        }
+        check(fastest * pxPerSec <= 125, "fastest orb over 50 boots: " + (fastest * pxPerSec).ToString("0") + " px/s (limit 125, including contact nudges)");
+        check(speedSum / speedN * pxPerSec <= 45, "average orb over 50 boots: " + (speedSum / speedN * pxPerSec).ToString("0") + " px/s (limit 45)");
+        check(atCap < speedN / 20, "orbs at the speed cap under 5% of the time: " + (100.0 * atCap / speedN).ToString("0.0") + "%");
+        // Left alone for a typical 14 s start: still drifting, and most boots ring softly by themselves.
+        int stopped = 0, silent = 0; float loudestAlone = 0;
+        for (int seed = 0; seed < 200; seed++)
+        {
+            var alone = new Scene(new Random(seed), face); int rung = 0; alone.Struck = (a, b, l) => { rung++; loudestAlone = Math.Max(loudestAlone, l); };
+            for (int t = 0; t < 840; t++) alone.Tick();
+            bool moving = false; foreach (var o in alone.Orbs) if (o.Speed >= 0.02f) moving = true;
+            if (!moving) stopped++; if (rung == 0) silent++;
+        }
+        check(stopped == 0, "no cursor, 14 s: orbs still drifting on all 200 boots (stopped: " + stopped + ")");
+        check(silent < 100, "no cursor, 14 s: boots that never ring: " + silent + " of 200");
+        check(loudestAlone < 0.3f, "no cursor: drifting touches stay soft, loudest " + loudestAlone.ToString("0.00"));
+        // A parked cursor right beside an orb eases it into motion; the lightest takes at least 0.2 s to reach 40 px/s, the heaviest far longer.
+        Func<float, int> easeIn = r =>
+        {
+            var e = new Scene(new Random(1), bounds); while (e.Orbs.Count > 1) e.Orbs.RemoveAt(1);
+            var o = e.Orbs[0]; o.R = r; o.Mass = (float)Math.Pow(r, 3); o.X = 230; o.Y = 120; o.Vx = 0; o.Vy = 0; e.MouseX = 230 - r - 5; e.MouseY = 120;
+            for (int t = 1; t <= 600; t++) { e.Tick(); if (o.Speed * pxPerSec >= 40) return t; }
+            return 600;
+        };
+        int easeLight = easeIn(26), easeHeavy = easeIn(77);
+        check(easeLight >= 12, "lightest orb takes " + easeLight + " steps to reach 40 px/s (at least 12)");
+        check(easeHeavy >= 3 * easeLight, "heaviest orb responds far more slowly: " + easeHeavy + " steps");
 
         // Audio: offline render with two strikes.
         var synth = new Synth(); var buf = new short[Synth.Frames * 2];
@@ -388,26 +492,77 @@ static class SelfTest
         check(differ > total * Synth.Frames / 2, "left and right differ (binaural): " + differ + " frames");
         check(strikeAt == 20L * Synth.Frames, "strike scheduled at the next rendered frame: " + strikeAt);
         check(onset > 10 * quiet && later < onset, "bell is up one buffer after the strike and decays: " + quiet.ToString("0") + " -> " + onset.ToString("0") + " -> " + later.ToString("0"));
-        // Sixteen soft strikes in a row: once all eight bell slots are taken, stealing one must not add
+        // Sixteen soft strikes in a row: once all twelve bell slots are taken, stealing one must not add
         // a click, i.e. the largest sample-to-sample jump must not grow beyond the pre-stealing level.
         var burst = new Synth(); int jumpFree = 0, jumpSteal = 0; short prevL = 0;
         for (int i = 0; i < 80; i++)
         {
-            if (i % 4 == 0 && i < 64) burst.Strike(200 + i * 3, 206 + i * 3, 0.15f);
+            if (i % 2 == 0 && i < 32) burst.Strike(60 + i * 0.85f, 66 + i * 0.85f, 0.2f); // low notes barely move between samples, so a step stands out
             burst.Render(buf);
             for (int n = 0; n < buf.Length; n += 2)
             {
                 int jump = (n > 0 || i > 0) ? Math.Abs(buf[n] - prevL) : 0; prevL = buf[n];
-                if (i < 32) jumpFree = Math.Max(jumpFree, jump); else jumpSteal = Math.Max(jumpSteal, jump);
+                if (i < 24) jumpFree = Math.Max(jumpFree, jump); else jumpSteal = Math.Max(jumpSteal, jump);
             }
         }
-        // A stolen bell stopping dead would jump about 5000 here (its amplitude times the gain); the tails
-        // spread that over 10 ms. Allow the natural growth from more voices, but nothing like a click.
-        check(jumpSteal < 2300 && jumpSteal <= jumpFree * 2, "voice stealing does not click: largest jump " + jumpFree + " before stealing, " + jumpSteal + " during");
+        check(jumpSteal <= jumpFree * 2, "voice stealing does not click: largest jump " + jumpFree + " before stealing, " + jumpSteal + " during");
         check(Synth.FlagsOffset == (IntPtr.Size == 8 ? 24 : 16), "WAVEHDR flags offset matches the process bitness: " + Synth.FlagsOffset);
+
+        // Clean at full force: one bell has no energy at three times its fundamental unless the output stage is distorting.
+        var clean = new Synth(); clean.Strike(220, 227, 1f); var cleanL = new List<float>();
+        for (int i = 0; i < 12; i++) { clean.Render(buf); if (i >= 2) for (int n = 0; n < buf.Length; n += 2) cleanL.Add(buf[n] / 32768f); }
+        double thirdDb = 20 * Math.Log10(Tone(cleanL, 660) / Tone(cleanL, 220));
+        check(thirdDb < -40, "full-force bell, third harmonic: " + thirdDb.ToString("0.0") + " dB (limit -40)");
+        // Eight full-force bells at once stay under the ceiling.
+        var pile = new Synth(); float pilePeak = 0; for (int b = 0; b < 8; b++) pile.Strike(200 + b * 30, 206 + b * 30, 1f);
+        var pileL = new List<float>();
+        for (int i = 0; i < 40; i++) { pile.Render(buf); foreach (short v in buf) pilePeak = Math.Max(pilePeak, Math.Abs(v) / 32768f); if (i >= 5 && i < 15) for (int n = 0; n < buf.Length; n += 2) pileL.Add(buf[n] / 32768f); }
+        check(pilePeak <= 0.9f, "eight full bells at once: peak " + pilePeak.ToString("0.00") + " (limit 0.90)");
+        double pileThird = 20 * Math.Log10(Tone(pileL, 3 * 200) / Tone(pileL, 200));
+        check(pileThird < -45, "eight full bells at once, distortion product at 600 Hz: " + pileThird.ToString("0.0") + " dB (limit -45)");
+        // The hardest collisions, alone and overlapping, stay clean: nothing appears where no partial lives.
+        double productsFull = Products(Collide(1f, -1, buf)), productsOverlap = Products(Collide(0.9f, 15, buf));
+        check(productsFull < -50, "full-force collision, products away from any partial: " + productsFull.ToString("0.0") + " dB (limit -50)");
+        check(productsOverlap < -50, "two hard collisions overlapping, products away from any partial: " + productsOverlap.ToString("0.0") + " dB (limit -50)");
+        // Force still decides the volume: every step harder is louder, and the peak never drops.
+        double[] h25 = Hit(0.25f, buf), h50 = Hit(0.5f, buf), h75 = Hit(0.75f, buf), h100 = Hit(1f, buf);
+        check(h25[1] < h50[1] && h50[1] < h75[1] && h75[1] < h100[1] && h25[0] < h50[0] && h50[0] < h75[0] && h75[0] <= h100[0] + 0.001,
+            "harder hits are louder: RMS " + h25[1].ToString("0.000") + " " + h50[1].ToString("0.000") + " " + h75[1].ToString("0.000") + " " + h100[1].ToString("0.000") + ", peak " + h25[0].ToString("0.00") + " " + h50[0].ToString("0.00") + " " + h75[0].ToString("0.00") + " " + h100[0].ToString("0.00"));
+        // A second hit on a ringing orb never makes either ear quieter than leaving it alone.
+        double worstDrop = 0;
+        for (float f = 180; f < 400; f += 15)
+            foreach (int gap in new[] { 15, 25, 50 })
+                foreach (float second in new[] { 0.05f, 0.15f, 0.3f })
+                {
+                    var one = new Synth(); var two = new Synth(); double[] a1 = new double[2], a2 = new double[2];
+                    one.Strike(f, f + 6, 0.3f); two.Strike(f, f + 6, 0.3f);
+                    for (int i = 0; i < gap + 25; i++)
+                    {
+                        if (i == gap) two.Strike(f, f + 6, second);
+                        one.Render(buf); if (i > gap) for (int n = 0; n < buf.Length; n += 2) { a1[0] += buf[n] * (double)buf[n]; a1[1] += buf[n + 1] * (double)buf[n + 1]; }
+                        two.Render(buf); if (i > gap) for (int n = 0; n < buf.Length; n += 2) { a2[0] += buf[n] * (double)buf[n]; a2[1] += buf[n + 1] * (double)buf[n + 1]; }
+                    }
+                    worstDrop = Math.Min(worstDrop, 10 * Math.Log10(Math.Min(a2[0] / a1[0], a2[1] / a1[1])));
+                }
+        check(worstDrop > -0.1, "a second hit on a ringing orb never quiets it: worst " + worstDrop.ToString("0.00") + " dB");
+        // Closing: the sound glides to silence inside the card's fade, with no step.
+        var closing = new Synth(); closing.Strike(220, 226, 0.8f); for (int i = 0; i < 5; i++) closing.Render(buf);
+        closing.FadeOut(); int closeJump = 0; short prevClose = 0; float closeEnd = 0;
+        for (int i = 0; i < 15; i++) { closing.Render(buf); for (int n = 0; n < buf.Length; n += 2) { if (n > 0 || i > 0) closeJump = Math.Max(closeJump, Math.Abs(buf[n] - prevClose)); prevClose = buf[n]; if (i == 14) closeEnd = Math.Max(closeEnd, Math.Abs(buf[n])); } }
+        check(closeEnd == 0 && closeJump < 2500, "closing fades to silence in 300 ms: end level " + closeEnd + ", largest step " + closeJump);
         // The real device, if there is one: the pump must keep rendering past its first queued buffers.
         var live = new Synth();
-        if (live.Start()) { Thread.Sleep(300); long got = live.Rendered; live.Dispose(); check(got > Synth.Buffers * Synth.Frames * 2, "sound device keeps streaming: " + got + " frames in 300 ms"); }
+        if (live.Start())
+        {
+            Thread.Sleep(300); long got = live.Rendered;
+            check(got > Synth.Buffers * Synth.Frames * 2 && live.FailedWrites == 0, "sound device keeps streaming: " + got + " frames in 300 ms, " + live.FailedWrites + " failed writes");
+            // Claude's start-up pegs the machine: every core busy for 6 s must not leave a gap in the sound.
+            var stop = new ManualResetEvent(false); var hogs = new List<Thread>();
+            for (int c = 0; c < Environment.ProcessorCount * 2; c++) { var h = new Thread(() => { double x = 1; while (!stop.WaitOne(0)) for (int k = 0; k < 20000; k++) x = Math.Sqrt(x + 1); }) { IsBackground = true }; h.Start(); hogs.Add(h); }
+            int before2 = live.Underruns; Thread.Sleep(6000); stop.Set(); foreach (var h in hogs) h.Join();
+            check(live.Underruns == before2 && live.FailedWrites == 0, "no gaps with every core busy for 6 s: " + (live.Underruns - before2) + " underruns, " + live.FailedWrites + " failed writes");
+            live.Dispose();
+        }
         else lines.Add("SKIP no sound device for the streaming check");
         lines.Add(failures == 0 ? "ALL PASS" : failures + " FAILED");
         System.IO.File.WriteAllLines(reportPath, lines);
