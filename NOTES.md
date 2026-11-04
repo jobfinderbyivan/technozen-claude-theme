@@ -75,6 +75,19 @@ The leaf is `leaf.py`: a lime-to-green gradient, faint veins, a fractal-noise ce
 
 A second adversarial review (three reviewers, each finding re-checked) found 15 issues in the skin layer before the final commit, among them petals painting over the transcript (`html::after` needs `z-index: -1`), wet headlines applied inside white dialogs, secondary text too faint on the leaf, a drift check that always warned with a skin on, a comment-blind `@keyframes` hoist, and a nested-keyframes test that only looked at the first rule. All fixed.
 
+## The Windows installer (added the same day)
+
+Read from the app bundle (`app.asar`, Store build 4.16336) and tested where possible:
+
+- The app refuses to start if its command line carries `remote-debugging-port`, `remote-debugging-pipe` or a dozen other Chromium switches (a denylist in the main bundle), so Chrome DevTools Protocol injection is out. Signed builds also ignore `CLAUDE_USER_DATA_DIR`, and a second launch just hands its arguments to the running instance.
+- Developer Mode is `developer_settings.json` with `{"allowDevTools": true}` in the app's user data folder (`%LOCALAPPDATA%\Claude-Data\claude_<id>\` for the Store build, `%APPDATA%\Claude` for older installs). The schema has that one key. The Developer menu's visibility is computed at startup, so it needs a restart.
+- With Developer Mode on, the environment variable `CLAUDE_DEV_TOOLS` (`undocked`, `detach`, `bottom`, `left`, `right`) makes the app open DevTools on its main window at startup. The DevTools shortcut is **Ctrl+Alt+I** (Ctrl+Shift+I is the model picker).
+- The Store build's launch alias is `%LOCALAPPDATA%\Microsoft\WindowsApps\claude-desktop.exe`; it accepts arguments and passes environment variables through.
+
+`installer/TechnozenInstaller.cs` builds with the `csc.exe` that ships in every Windows (.NET Framework 4.x), so there is no SDK to install. Install writes the Developer Mode file, creates a Start Menu shortcut that runs the EXE with `--launch`, then launches: close Claude, start it through the alias with `CLAUDE_DEV_TOOLS=undocked`, wait for a visible window owned by Claude.exe whose title contains "Developer Tools" or "DevTools", bring it to the front, and type: Ctrl+Shift+P, "Show Console", Enter, Ctrl+V, "allow pasting", Enter, Ctrl+V, Enter, then WM_CLOSE. The double paste handles Chromium's one-time self-XSS warning either way. The launch path could not be exercised on the build machine because this session runs inside the Claude app it would restart; the owner tests it.
+
+A third adversarial review (three reviewers, each finding re-checked with C# harnesses compiled by the system csc.exe) found ten issues in the first installer draft. The two that would have broken every run: the process-name test was case-sensitive while the real process name is lowercase `claude`, and that same name belongs to the Claude Code CLI, so the launcher would have killed every CLI session. Now only processes whose executable path is the desktop app count, Claude is asked to close and never killed, the EXE is copied to `%LOCALAPPDATA%\Programs\Technozen for Claude\` before the shortcut points at it, clipboard failures are caught, work runs off the UI thread with the buttons disabled, and Uninstall asks before turning Developer Mode off.
+
 ## Known gaps
 
 - No persistence across desktop app restarts (no startup hook; same as every other project).

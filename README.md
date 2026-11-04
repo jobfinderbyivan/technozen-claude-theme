@@ -10,17 +10,23 @@ Five Technozen themes for the Claude desktop app and claude.ai, switchable with 
 | **Mizu Glass** `mizu` | dark | deep sea navy, aqua | ![mizu](screenshots/mizu.jpg) |
 | **Yoru Lantern** `yoru` | dark | charcoal, lantern amber | ![yoru](screenshots/yoru.jpg) |
 
-## Install in the Claude desktop app (Windows / macOS)
+## Windows: the one-click installer
+
+Download **Technozen for Claude.exe** from the [latest release](https://github.com/jobfinderbyivan/technozen-claude-theme/releases/latest) and run it. **Install and apply** copies the program to your user folder, turns on Claude's Developer Mode, adds a **Claude (Technozen)** shortcut to the Start Menu, and applies the theme right away. Claude is closed for that (it asks first; unsaved text is lost) and reopened. From then on, start Claude from that shortcut and the theme is applied automatically every time; start it the normal way and you get plain Claude. **Uninstall** removes the shortcut and the copy, and asks whether to turn Developer Mode off too.
+
+How it works: Claude opens its DevTools by itself when started with a certain environment variable, so the launcher starts Claude that way, pastes the theme into the console with keystrokes, and closes DevTools again. Keep your hands off the keyboard and mouse for the ten seconds it takes. If anything goes wrong it says so and leaves the theme on your clipboard for a manual paste. Windows SmartScreen will warn because the file is not code-signed, and some antivirus tools dislike programs that send keystrokes; choose "More info" > "Run anyway", or build it yourself from `installer/` with `python installer/build_exe.py` (uses the compiler that ships with Windows).
+
+## Install in the Claude desktop app by hand (Windows / macOS)
 
 The desktop app has no theme setting yet ([anthropics/claude-code#79305](https://github.com/anthropics/claude-code/issues/79305) tracks it), so the theme is a small script you run once per launch from the app's own developer tools.
 
-1. In Claude: **Help > Troubleshooting > Enable Developer Mode** (once). Then press **Ctrl+Shift+I** (Cmd+Option+I on Mac) to open DevTools.
+1. In Claude: **Help > Troubleshooting > Enable Developer Mode** (once), then restart Claude. Press **Ctrl+Alt+I** (Cmd+Option+I on Mac) to open DevTools, or use the **Developer > Show Dev Tools** menu.
 2. Click the **Console** tab, paste the whole of [`dist/technozen.snippet.js`](dist/technozen.snippet.js), press **Enter**. Close DevTools.
 3. Done. The app is now in Shiro Ceramic.
 
 - A small panel appears in the bottom-right corner: click a swatch to switch theme, tick **skin** for the full skin or untick it for colors only, **×** removes the theme, the round button folds the panel away. Everything is remembered.
 - Hotkeys do the same: **Ctrl+Alt+T** cycles to the next theme, **Ctrl+Alt+S** switches the skin off and on, **Ctrl+Alt+0** removes everything.
-- Your choice is remembered. After restarting Claude: Ctrl+Shift+I, Console, press the **Up arrow** to recall the snippet, Enter. It comes back in the theme you left it in. (If you prefer, save it under DevTools > Sources > Snippets and run it with Ctrl+Enter.)
+- Your choice is remembered. After restarting Claude: Ctrl+Alt+I, Console, press the **Up arrow** to recall the snippet, Enter. It comes back in the theme you left it in. (If you prefer, save it under DevTools > Sources > Snippets and run it with Ctrl+Enter.)
 - From the DevTools console you can also run `technozen.apply("mizu")` or `technozen.remove()`.
 - If you change Claude's own Appearance setting while a theme is on, cycle Ctrl+Alt+T back round to your theme, or run `technozen.apply("take")` in the console.
 
