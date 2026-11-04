@@ -216,17 +216,21 @@ class Watcher : ApplicationContext
     {
         if (pid == 0)
         {
-            foreach (Process p in Paths.AppProcesses())
+            // Claude is many processes (renderers, GPU, utilities); the one that owns the windows is the
+            // root, which started first.
+            var roots = new List<Process>(Paths.AppProcesses());
+            roots.Sort((a, b) => a.StartTime.CompareTo(b.StartTime));
+            if (roots.Count > 0)
             {
-                if (handled.ContainsKey(p.Id)) continue;
+                Process p = roots[0];
+                if (handled.ContainsKey(p.Id)) return;
                 // Claude that was already running when the helper started has nothing to inject into,
                 // unless its DevTools window is still waiting (it was launched with the variable set).
                 bool fresh = (DateTime.Now - p.StartTime).TotalSeconds < 20;
                 bool waiting = Native.WindowsOf(p.Id).Exists(w => Native.IsDevToolsTitle(w.Key));
-                if (!fresh && !waiting) { handled[p.Id] = true; continue; }
+                if (!fresh && !waiting) { handled[p.Id] = true; return; }
                 pid = p.Id; since = Stopwatch.StartNew(); mainWindow = IntPtr.Zero; injecting = false;
                 loader = new Loader(); loader.Show();
-                break;
             }
             foreach (int old in new List<int>(handled.Keys)) try { Process.GetProcessById(old); } catch { handled.Remove(old); }
             return;
@@ -404,7 +408,7 @@ class MainForm : Form
 
     public MainForm()
     {
-        Text = "Technozen for Claude";
+        Text = "Technozen for Claude " + Snippet.Version;
         ClientSize = new Size(440, 250);
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
