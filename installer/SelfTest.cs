@@ -23,6 +23,8 @@ partial class Loader
         }
     }
 
+    public static bool ProgressNeverRecedes() { using (var f = new Loader(7)) { f.Progress(0.9f); f.Progress(0.2f); return f.progress == 0.9f; } }
+
     // --fps <report> [busy threads]: shows the card silently for 5 s, the mouse untouched, and reports what it really achieved.
     public static void RunFpsTest(string reportPath, int busyThreads)
     {
@@ -289,6 +291,7 @@ static class SelfTest
         // The proof may land on the clipboard before the helper starts looking (real start, 1.4.0): it must still count.
         try { Clipboard.SetText("technozen-proof"); check(Watcher.ThemeRan("technozen-proof", 50), "proof already on the clipboard is seen"); check(!Watcher.ThemeRan("something else", 50), "other clipboard text is not proof"); }
         catch (System.Runtime.InteropServices.ExternalException) { lines.Add("SKIP clipboard refused, usually a locked screen; rerun unlocked"); }
+        check(Loader.ProgressNeverRecedes(), "progress bar never moves backward");
         lines.Add(failures == 0 ? "ALL PASS" : failures + " FAILED");
         System.IO.File.WriteAllLines(reportPath, lines);
         return failures == 0 ? 0 : 1;

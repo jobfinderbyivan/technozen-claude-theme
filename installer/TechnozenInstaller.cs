@@ -436,7 +436,7 @@ partial class Loader : Form
     float demoTime = -1; // the demo image renders at a fixed time so it is reproducible
     volatile float progress; // real progress only: set by the helper at each milestone, never by time
 
-    public void Progress(float p) { progress = p; }
+    public void Progress(float p) { progress = Math.Max(progress, p); } // a retry repeats milestones; the bar must never move back
 
     public Loader() : this(Environment.TickCount) { }
 
