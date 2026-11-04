@@ -18,7 +18,7 @@ The desktop app has no theme setting yet ([anthropics/claude-code#79305](https:/
 2. Click the **Console** tab, paste the whole of [`dist/technozen.snippet.js`](dist/technozen.snippet.js), press **Enter**. Close DevTools.
 3. Done. The app is now in Shiro Ceramic.
 
-- **Ctrl+Alt+T** cycles to the next theme. **Ctrl+Alt+0** removes the theme.
+- **Ctrl+Alt+T** cycles to the next theme. **Ctrl+Alt+S** switches the skin off and on (skin off = colors only, Claude's own shapes). **Ctrl+Alt+0** removes everything.
 - Your choice is remembered. After restarting Claude: Ctrl+Shift+I, Console, press the **Up arrow** to recall the snippet, Enter. It comes back in the theme you left it in. (If you prefer, save it under DevTools > Sources > Snippets and run it with Ctrl+Enter.)
 - From the DevTools console you can also run `technozen.apply("mizu")` or `technozen.remove()`.
 - If you change Claude's own Appearance setting while a theme is on, press Ctrl+Alt+T to re-apply.
@@ -33,7 +33,7 @@ Copy the files in `dist/cli-themes/` into `~/.claude/themes/` (on Windows `%USER
 
 ## Change the colors
 
-Everything is generated from one file. Edit [`themes.json`](themes.json), then:
+Colors come from one file, [`themes.json`](themes.json); shapes from `skins/<slug>.css` (plain CSS, nested under the theme selector by the build). Edit either, then:
 
 ```bash
 python build.py
@@ -49,9 +49,18 @@ python test.py
 
 Claude occasionally renames the CSS variables the theme sets. When that happens the snippet prints a warning in the console: `[technozen] the app is not painting theme colors...`. To fix it, follow the recipe at the end of `NOTES.md` (it uses `css-dump/names.json`, the list of every variable the theme sets), update the mapping table in `build.py`, rebuild, and run the tests.
 
+## Colors and skins
+
+Each theme has two layers:
+
+- **Colors** (`themes.json`): eight colors mapped onto every CSS variable the app reads. This alone recolors the whole app and keeps Claude's shapes.
+- **Skin** (`skins/<slug>.css`): shapes, gloss, backgrounds and motifs on top. Take is a wet green leaf with every button a water drop (the background is drawn by `leaf.py`, no image files). Mizu is deep water with glass panes, Yoru a dark room lit by one paper lantern, Sakura petals over light wood, Shiro white ceramic tiles.
+
+Ctrl+Alt+S toggles the skin layer; the choice is remembered separately from the theme.
+
 ## How it works
 
-One `<style>` element with five blocks, each scoped to `html[data-technozen="<slug>"]`, overriding the app's CSS custom properties with `!important`. Switching themes changes one attribute on `<html>`; nothing reloads. The app has three layers of variables (the older claude.ai `--bg-*`/`--text-*` HSL triplets, the newer `--cds-*` hex tokens, and the Code tab's `--df-*` frame tokens) and all three are set from the same eight colors.
+One `<style>` element. Five color blocks, each scoped to `html[data-technozen="<slug>"]`, override the app's CSS custom properties with `!important`; five skin blocks are scoped to `html[data-technozen="<slug>"][data-technozen-skin="on"]` and use CSS nesting. Switching changes one attribute on `<html>`; nothing reloads. The app has three layers of variables (the older claude.ai `--bg-*`/`--text-*` HSL triplets, the newer `--cds-*` hex tokens, and the Code tab's `--df-*` frame tokens) and all three are set from the same eight colors. Skins target the app's stable hooks (`data-cds="Button"`, `data-cds="Panel"`, `nav`, `aside`, the `.ProseMirror` composer) rather than its generated class names.
 
 ## Credits
 
@@ -72,6 +81,7 @@ Technozen references: [Aesthetics Wiki](https://aesthetics.fandom.com/wiki/Techn
 - The desktop snippet does not persist across app restarts. The app has no startup hook for user scripts.
 - Artifact and preview panes keep their own styling.
 - The Code tab was mapped from other projects' selectors, not verified live here. If it stays stock, see `NOTES.md`.
+- Skins use `backdrop-filter` blur on panels. On a weak GPU with a very long transcript, turn the skin off (Ctrl+Alt+S) if scrolling stutters.
 - The theme sets the app's light/dark attribute to match itself. Changing Appearance in Claude's settings while themed has no visible effect until you re-apply or remove the theme.
 
 MIT license.

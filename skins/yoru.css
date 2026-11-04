@@ -1,0 +1,24 @@
+/* Yoru skin: a dark room, one paper lantern glowing amber at the top corner. First pass. */
+& {
+  background:
+    radial-gradient(circle 260px at 92% 6%, rgba(242, 179, 91, 0.45), rgba(242, 179, 91, 0.12) 40%, transparent 70%),
+    radial-gradient(circle 70px at 92% 6%, rgba(255, 220, 160, 0.9), rgba(242, 179, 91, 0.6) 60%, transparent 100%),
+    linear-gradient(180deg, #16181d, #101217) !important;
+  background-attachment: fixed !important;
+}
+/* The app paints its page color on body with these classes; let the html background through. */
+.bg-surface-1, .bg-surface-2, main {
+  background-color: transparent !important;
+}
+nav, aside, .dframe-sidebar, [data-cds="Panel"], [data-cds="Card"], [role="dialog"], [data-cds-popup] {
+  border-radius: 16px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 1px 0 rgba(242, 179, 91, 0.08), 0 16px 40px rgba(0, 0, 0, 0.55);
+}
+[data-cds="Button"], button.cds-reset {
+  border-radius: 12px !important;
+  background: linear-gradient(180deg, #2a2d35, #1f2229) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 0 1px rgba(242, 179, 91, 0.18), 0 4px 10px rgba(0, 0, 0, 0.5) !important;
+}
+[data-cds="Button"]:hover, button.cds-reset:hover {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 0 0 1px rgba(242, 179, 91, 0.5), 0 0 18px rgba(242, 179, 91, 0.35) !important;
+}

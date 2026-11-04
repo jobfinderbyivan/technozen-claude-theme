@@ -96,6 +96,12 @@ def test_distinct():
 def test_css():
     text = (DIST / "technozen.css").read_text(encoding="utf-8")
     check(text.count("{") == text.count("}"), "css: unbalanced braces")
+    check("__LEAF__" not in text and "url(http" not in text, "css: placeholder left in or external URL used")
+    for slug in THEMES:
+        skin = build.ROOT / "skins" / f"{slug}.css"
+        check(skin.exists(), f"skins/{slug}.css is missing")
+        check(f'html[data-technozen="{slug}"][data-technozen-skin="on"] {{' in text, f"css: no skin block for {slug}")
+    text = text[:text.index('[data-technozen-skin="on"]')]  # the palette checks below are about the color blocks only
     sample = variables(next(iter(THEMES.values())))
     for slug in THEMES:
         block = re.search(rf'html\[data-technozen="{slug}"\].*?\n\}}', text, re.S)
@@ -130,6 +136,7 @@ def test_js():
         check(text.count("{") == text.count("}"), f"{file}: unbalanced braces")
         check("</script" not in text.lower(), f"{file}: contains </script>")
         check("`" not in text, f"{file}: contains a backtick, the CSS string must stay JSON-quoted")
+        check(len(text) < 400_000, f"{file}: {len(text) // 1024} KB is too big to paste comfortably (limit 400 KB)")
         if shutil.which("node"):
             r = subprocess.run(["node", "--check", str(DIST / file)], capture_output=True, text=True)
             check(r.returncode == 0, f"{file}: node --check failed:\n{r.stderr}")

@@ -1,0 +1,25 @@
+/* Sakura skin: blossom petals drifting over pale wood. First pass. */
+& {
+  background:
+    radial-gradient(ellipse 14px 9px at 12% 18%, rgba(252, 201, 185, 0.9) 60%, transparent 62%),
+    radial-gradient(ellipse 10px 7px at 78% 32%, rgba(252, 201, 185, 0.8) 60%, transparent 62%),
+    radial-gradient(ellipse 12px 8px at 40% 74%, rgba(243, 160, 170, 0.75) 60%, transparent 62%),
+    radial-gradient(ellipse 8px 5px at 90% 80%, rgba(252, 201, 185, 0.85) 60%, transparent 62%),
+    radial-gradient(ellipse 11px 7px at 60% 12%, rgba(243, 160, 170, 0.7) 60%, transparent 62%),
+    repeating-linear-gradient(90deg, rgba(156, 122, 102, 0.05) 0 2px, transparent 2px 23px),
+    linear-gradient(180deg, #fdf3f1, #f7e6e2) !important;
+  background-attachment: fixed !important;
+}
+/* The app paints its page color on body with these classes; let the html background through. */
+.bg-surface-1, .bg-surface-2, main {
+  background-color: transparent !important;
+}
+nav, aside, .dframe-sidebar, [data-cds="Panel"], [data-cds="Card"], [role="dialog"], [data-cds-popup] {
+  border-radius: 20px;
+  box-shadow: inset 0 1px 0 #fff, 0 8px 24px rgba(120, 70, 70, 0.1);
+}
+[data-cds="Button"], button.cds-reset {
+  border-radius: 999px !important;
+  background: linear-gradient(180deg, #fff8f7, #f6e3e1) !important;
+  box-shadow: inset 0 1px 0 #fff, 0 2px 6px rgba(120, 70, 70, 0.15) !important;
+}
