@@ -20,7 +20,7 @@ class Orb
 class Scene
 {
     // Zen: orbs float. The cap is rarely reached, pushes ease in over a second, and contacts are soft.
-    public const float Step = 1f / 60f, MaxSpeed = 1f, MousePush = 0.0144f, Restitution = 0.6f, WallRestitution = 0.85f, Damping = 0.997f, Drift = 0.08f; // drag only acts above the slow drift speed
+    public const float Step = 1f / 60f, MaxSpeed = 1.2f, MousePush = 0.0144f, Restitution = 0.6f, WallRestitution = 0.85f, Damping = 0.997f, Drift = 0.08f; // drag only acts above the slow drift speed
     public const float CardScale = 1.5625f; // device pixels per design unit at 96 DPI
     public const float HardHit = 0.2f; // a re-bounce this hard rings even before the pair has separated
     public const float MinClosingSpeed = 0.03f; // px per step; slower touches do not ring

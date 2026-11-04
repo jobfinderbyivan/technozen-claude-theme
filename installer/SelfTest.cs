@@ -163,7 +163,7 @@ static class SelfTest
                 }
             }
         }
-        check(fastest * pxPerSec <= 135, "fastest orb over 50 boots: " + (fastest * pxPerSec).ToString("0") + " px/s (limit 135, a one-frame contact nudge above the 94 px/s cap)");
+        check(fastest * pxPerSec <= 162, "fastest orb over 50 boots: " + (fastest * pxPerSec).ToString("0") + " px/s (limit 162, a one-frame contact nudge above the 113 px/s cap)");
         check(speedSum / speedN * pxPerSec <= 45, "average orb over 50 boots: " + (speedSum / speedN * pxPerSec).ToString("0") + " px/s (limit 45)");
         check(atCap < speedN / 20, "orbs at the speed cap under 5% of the time: " + (100.0 * atCap / speedN).ToString("0.0") + "%");
         // Left alone for a typical 14 s start: still drifting, and most boots ring softly by themselves.
