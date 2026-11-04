@@ -286,6 +286,9 @@ static class SelfTest
             live.Dispose();
         }
         else lines.Add("SKIP no sound device for the streaming check");
+        // The proof may land on the clipboard before the helper starts looking (real start, 1.4.0): it must still count.
+        try { Clipboard.SetText("technozen-proof"); check(Watcher.ThemeRan("technozen-proof", 50), "proof already on the clipboard is seen"); check(!Watcher.ThemeRan("something else", 50), "other clipboard text is not proof"); }
+        catch (System.Runtime.InteropServices.ExternalException) { lines.Add("SKIP clipboard refused, usually a locked screen; rerun unlocked"); }
         lines.Add(failures == 0 ? "ALL PASS" : failures + " FAILED");
         System.IO.File.WriteAllLines(reportPath, lines);
         return failures == 0 ? 0 : 1;

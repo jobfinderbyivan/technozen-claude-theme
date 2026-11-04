@@ -352,9 +352,9 @@ class Watcher : ApplicationContext
     // Proof the theme ran: the pasted text ends with a call to the console's own copy(), which puts a
     // per-start stamp on the clipboard once the snippet has evaluated without throwing. (Claude's main
     // process blocks page titles from reaching the window title, so document.title cannot carry it.)
-    static bool ThemeRan(string stamp, int waitMs)
+    public static bool ThemeRan(string stamp, int waitMs)
     {
-        uint seq = GetClipboardSequenceNumber();
+        uint seq = 0; // never a real number, so the first pass looks: copy() may have fired before this call
         for (var t = Stopwatch.StartNew(); t.ElapsedMilliseconds < waitMs; Thread.Sleep(20))
             if (GetClipboardSequenceNumber() != seq) { seq = GetClipboardSequenceNumber(); try { if (Clipboard.GetText() == stamp) return true; } catch { } }
         return false;
@@ -371,7 +371,7 @@ class Watcher : ApplicationContext
         {
             Func<int, int> ms = n => (int)(n * k);
             progress(0.2f);
-            try { Clipboard.SetText(theme + "\n;typeof copy === \"function\" && copy(\"" + stamp + "\");\n"); } catch { Thread.Sleep(100); continue; }
+            try { Clipboard.SetText(theme + "\n;typeof copy === \"function\" && copy(\"" + stamp + "\");\n"); } catch { Log("clipboard refused on attempt " + attempt + " (locked screen?)"); Thread.Sleep(100); continue; }
             Native.SetForegroundWindow(devtools); Thread.Sleep(30);
             if (Native.GetForegroundWindow() != devtools) { SendKeys.SendWait("%"); Native.SetForegroundWindow(devtools); Thread.Sleep(50); } // the Alt tap lifts Windows' foreground lock
             if (Native.GetForegroundWindow() != devtools) { Thread.Sleep(ms(150)); continue; }
