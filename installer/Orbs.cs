@@ -20,7 +20,7 @@ class Orb
 class Scene
 {
     // Zen: orbs float. The cap is rarely reached, pushes ease in over a second, and contacts are soft.
-    public const float Step = 1f / 60f, MaxSpeed = 1f, MousePush = 0.012f, Restitution = 0.6f, WallRestitution = 0.85f, Damping = 0.997f, Drift = 0.08f; // drag only acts above the slow drift speed
+    public const float Step = 1f / 60f, MaxSpeed = 1f, MousePush = 0.0144f, Restitution = 0.6f, WallRestitution = 0.85f, Damping = 0.997f, Drift = 0.08f; // drag only acts above the slow drift speed
     public const float CardScale = 1.5625f; // device pixels per design unit at 96 DPI
     public const float HardHit = 0.2f; // a re-bounce this hard rings even before the pair has separated
     public const float MinClosingSpeed = 0.03f; // px per step; slower touches do not ring
@@ -439,7 +439,7 @@ static class SelfTest
                 }
             }
         }
-        check(fastest * pxPerSec <= 125, "fastest orb over 50 boots: " + (fastest * pxPerSec).ToString("0") + " px/s (limit 125, including contact nudges)");
+        check(fastest * pxPerSec <= 135, "fastest orb over 50 boots: " + (fastest * pxPerSec).ToString("0") + " px/s (limit 135, a one-frame contact nudge above the 94 px/s cap)");
         check(speedSum / speedN * pxPerSec <= 45, "average orb over 50 boots: " + (speedSum / speedN * pxPerSec).ToString("0") + " px/s (limit 45)");
         check(atCap < speedN / 20, "orbs at the speed cap under 5% of the time: " + (100.0 * atCap / speedN).ToString("0.0") + "%");
         // Left alone for a typical 14 s start: still drifting, and most boots ring softly by themselves.
@@ -454,7 +454,7 @@ static class SelfTest
         check(stopped == 0, "no cursor, 14 s: orbs still drifting on all 200 boots (stopped: " + stopped + ")");
         check(silent < 100, "no cursor, 14 s: boots that never ring: " + silent + " of 200");
         check(loudestAlone < 0.3f, "no cursor: drifting touches stay soft, loudest " + loudestAlone.ToString("0.00"));
-        // A parked cursor right beside an orb eases it into motion; the lightest takes at least 0.2 s to reach 40 px/s, the heaviest far longer.
+        // A parked cursor right beside an orb eases it into motion; the lightest takes about 0.2 s to reach 40 px/s, the heaviest far longer.
         Func<float, int> easeIn = r =>
         {
             var e = new Scene(new Random(1), bounds); while (e.Orbs.Count > 1) e.Orbs.RemoveAt(1);
@@ -463,7 +463,7 @@ static class SelfTest
             return 600;
         };
         int easeLight = easeIn(26), easeHeavy = easeIn(77);
-        check(easeLight >= 12, "lightest orb takes " + easeLight + " steps to reach 40 px/s (at least 12)");
+        check(easeLight >= 11, "lightest orb takes " + easeLight + " steps to reach 40 px/s (at least 11)");
         check(easeHeavy >= 3 * easeLight, "heaviest orb responds far more slowly: " + easeHeavy + " steps");
 
         // Audio: offline render with two strikes.

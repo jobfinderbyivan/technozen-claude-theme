@@ -30,6 +30,7 @@ static class Program
         if (args.Length > 0 && args[0] == "--watch") { Watcher.Run(); return; }
         if (args.Length > 1 && args[0] == "--check") { File.WriteAllText(args[1], Paths.Report()); return; }
         if (args.Length > 1 && args[0] == "--demo") { Loader.RenderDemo(args[1]); return; }
+        if (args.Length > 1 && args[0] == "--fps") { Loader.RunFpsTest(args[1], args.Length > 2 ? int.Parse(args[2]) : 0); return; }
         if (args.Length > 1 && args[0] == "--selftest") { Environment.Exit(SelfTest.Run(args[1])); return; }
         Application.Run(new MainForm());
     }
@@ -262,6 +263,8 @@ class Watcher : ApplicationContext
         try { File.AppendAllText(Path.Combine(Paths.InstallDir(), "helper.log"), DateTime.Now.ToString("HH:mm:ss.fff ") + line + "\r\n"); } catch { }
     }
 
+    volatile int injectResult; // 0 while the worker is typing, then 1 ok or 2 failed
+
     Watcher() { poll.Tick += (s, e) => { try { Tick(); } catch (Exception ex) { Log("tick error " + ex.Message); } }; poll.Start(); }
 
     void Tick()
@@ -297,6 +300,7 @@ class Watcher : ApplicationContext
             foreach (int old in new List<int>(handled.Keys)) try { Process.GetProcessById(old); } catch { handled.Remove(old); }
             return;
         }
+        if (injectResult != 0) { bool ok = injectResult == 1; injectResult = 0; Finish(ok); return; }
         IntPtr devtools = IntPtr.Zero;
         foreach (var w in Native.WindowsOf(pid))
         {
@@ -316,7 +320,7 @@ class Watcher : ApplicationContext
                 bool ok = false;
                 try { ok = Inject(devtools, card.Progress); } catch (Exception ex) { Log("inject error " + ex); }
                 Log("inject " + (ok ? "ok" : "failed"));
-                try { loader.BeginInvoke((Action)(() => Finish(ok))); } catch (Exception ex) { Log("finish error " + ex.Message); }
+                injectResult = ok ? 1 : 2; // the poll timer finishes up, so the input shield comes off even if the card was closed
             });
             t.SetApartmentState(ApartmentState.STA);
             t.Start();
@@ -399,11 +403,15 @@ class Loader : Form
                           Amber = Color.FromArgb(242, 179, 91), Ink = Color.FromArgb(7, 28, 43), Sky = Color.FromArgb(125, 200, 250),
                           SkyLow = Color.FromArgb(214, 238, 255), Grass = Color.FromArgb(150, 220, 70), GrassLow = Color.FromArgb(70, 160, 45);
     const int W = 460, H = 300;
-    readonly System.Windows.Forms.Timer anim = new System.Windows.Forms.Timer { Interval = 33 };
+    public const int TargetFps = 120;
+    [DllImport("dwmapi.dll")] static extern int DwmFlush(); // returns at the next screen refresh
+    readonly Rectangle[][] scanlines = new Rectangle[3][]; readonly SolidBrush scanlineBrush = new SolidBrush(Color.FromArgb(28, 0, 0, 0));
+    static int liveCards; bool begun; Thread framePump; volatile bool pumping; int framePending; bool closing;
+    long frames, slowFrames; double paintMs, worstPaintMs; readonly Stopwatch shown = new Stopwatch(); double fadeStart;
     readonly Stopwatch clock = Stopwatch.StartNew();
     readonly Scene scene; readonly Synth synth = new Synth();
     readonly float scale; // device pixels per design unit
-    readonly Bitmap[] sprites; readonly Bitmap scanlines; // orbs never change size or tint, so they are drawn once
+    readonly Bitmap[] sprites; readonly Bitmap scenery, wordmark; // everything that never changes is drawn once, so a frame is only a few blits
     double simulated; // seconds of physics already stepped; real time is stepped in 1/60 s slices
     float demoTime = -1; // --demo renders at a fixed time so the image is reproducible
     volatile float progress; // real progress only: set by the helper at each milestone, never by time
@@ -430,22 +438,80 @@ class Loader : Form
         scene.Struck = (a, b, loud) => { synth.Strike(a.Freq, a.Freq + a.Beat, loud * 0.6f); synth.Strike(b.Freq, b.Freq + b.Beat, loud * 0.6f); }; // both bowls ring
         sprites = new Bitmap[scene.Orbs.Count];
         for (int i = 0; i < sprites.Length; i++) sprites[i] = OrbSprite(scene.Orbs[i], scale);
-        scanlines = new Bitmap(Width, Height + 3);
-        using (var g = Graphics.FromImage(scanlines)) using (var line = new SolidBrush(Color.FromArgb(28, 0, 0, 0)))
-            for (int y = 0; y < scanlines.Height; y += 3) g.FillRectangle(line, 0, y, scanlines.Width, 1);
-        anim.Tick += (s, e) => { Tickle(); Invalidate(); };
+        for (int phase = 0; phase < 3; phase++)
+        {
+            scanlines[phase] = new Rectangle[Height / 3 + 1];
+            for (int i = 0; i < scanlines[phase].Length; i++) scanlines[phase][i] = new Rectangle(0, i * 3 + phase, Width, 1);
+        }
+        scenery = BuildScenery(); wordmark = BuildWordmark();
         MouseMove += (s, e) => { scene.MouseX = e.X / scale; scene.MouseY = e.Y / scale; };
         MouseLeave += (s, e) => { scene.MouseX = -1e6f; scene.MouseY = -1e6f; };
-        FormClosed += (s, e) => { synth.Dispose(); Watcher.Log("audio: " + synth.Underruns + " gaps, " + synth.FailedWrites + " failed writes"); };
+        FormClosed += (s, e) =>
+        {
+            pumping = false; synth.Dispose();
+            Watcher.Log("audio: " + synth.Underruns + " gaps, " + synth.FailedWrites + " failed writes");
+            Watcher.Log("graphics: " + FrameReport());
+            foreach (var b in sprites) b.Dispose(); scanlineBrush.Dispose(); scenery.Dispose(); wordmark.Dispose();
+            if (begun && --liveCards == 0) Thread.CurrentThread.Priority = ThreadPriority.Normal;
+        };
     }
 
     // Called once the card is shown: opens the sound device and starts animating. --demo never calls it.
-    public void Begin()
+    public void Begin() { Begin(true); }
+    void Begin(bool withSound)
     {
-        bool sound = synth.Start();
+        bool sound = withSound && synth.Start();
         string hum = ""; foreach (var o in scene.Orbs) hum += o.Freq.ToString("0") + " ";
         Watcher.Log("card: " + scene.Orbs.Count + " orbs at " + hum + "Hz, sound " + (sound ? "on" : "off") + ", scale " + scale.ToString("0.00"));
-        anim.Start();
+        begun = true; if (liveCards++ == 0) Thread.CurrentThread.Priority = ThreadPriority.AboveNormal; // this thread paints the card: Claude starting up must not stutter it
+        shown.Start(); pumping = true;
+        framePump = new Thread(FramePump) { IsBackground = true, Priority = ThreadPriority.AboveNormal };
+        framePump.Start();
+    }
+
+    // Frames are released at screen refreshes, up to TargetFps on average: every refresh on a 120 Hz screen or
+    // slower, and the right share of them on a faster one. A slow frame is skipped, never queued.
+    void FramePump()
+    {
+        long period = Stopwatch.Frequency / TargetFps, next = Stopwatch.GetTimestamp();
+        while (pumping)
+        {
+            if (DwmFlush() != 0) Thread.Sleep(4); // no compositor (rare, some remote sessions): pace by sleeping
+            long now = Stopwatch.GetTimestamp();
+            if (now < next - period / 3) continue; // too early for the next frame: wait for another refresh
+            next += period; if (now - next > 2 * period) next = now;
+            if (Interlocked.CompareExchange(ref framePending, 1, 0) != 0) continue;
+            try { BeginInvoke((Action)Frame); } catch (Exception) { return; } // the card closed underneath us
+        }
+    }
+
+    void Frame()
+    {
+        if (closing) return;
+        Tickle();
+        if (closing) return;
+        long start = Stopwatch.GetTimestamp();
+        Invalidate(); Update();
+        double ms = (Stopwatch.GetTimestamp() - start) * 1000.0 / Stopwatch.Frequency;
+        frames++; paintMs += ms; worstPaintMs = Math.Max(worstPaintMs, ms); if (ms > 1000.0 / TargetFps) slowFrames++;
+        Interlocked.Exchange(ref framePending, 0);
+    }
+
+    string FrameReport()
+    {
+        double s = Math.Max(0.001, shown.Elapsed.TotalSeconds), n = Math.Max(1, frames);
+        return frames + " frames in " + s.ToString("0.0") + " s, " + (frames / s).ToString("0.0") + " fps, paint " + (paintMs / n).ToString("0.00") + " ms average, " + worstPaintMs.ToString("0.0") + " ms worst, " + slowFrames + " over budget";
+    }
+
+    // --fps <report> [busy threads]: shows the card silently for 5 s, the mouse untouched, and reports what it really achieved.
+    public static void RunFpsTest(string reportPath, int busyThreads)
+    {
+        var f = new Loader(7); var stop = new ManualResetEvent(false);
+        for (int c = 0; c < busyThreads; c++) { var h = new Thread(() => { double x = 1; while (!stop.WaitOne(0)) for (int k = 0; k < 20000; k++) x = Math.Sqrt(x + 1); }) { IsBackground = true }; h.Start(); }
+        var done = new System.Windows.Forms.Timer { Interval = 5000 };
+        done.Tick += (s, e) => { done.Stop(); File.WriteAllText(reportPath, f.FrameReport() + "\r\n"); stop.Set(); f.Close(); };
+        f.Shown += (s, e) => { f.Begin(false); done.Start(); };
+        Application.Run(f);
     }
 
     protected override bool ShowWithoutActivation { get { return true; } }
@@ -454,15 +520,19 @@ class Loader : Form
         get { var cp = base.CreateParams; cp.ExStyle |= 0x08000000 | 0x00000008; return cp; } // WS_EX_NOACTIVATE | WS_EX_TOPMOST
     }
 
-    public void FadeOut() { fading = true; synth.FadeOut(); }
+    public void FadeOut() { if (!fading) fadeStart = clock.Elapsed.TotalSeconds; fading = true; synth.FadeOut(); }
 
     void Tickle()
     {
         double now = clock.Elapsed.TotalSeconds; int steps = 0;
         while (simulated + Scene.Step <= now && steps < 4) { scene.Tick(); simulated += Scene.Step; steps++; }
         if (simulated + Scene.Step <= now) simulated = now; // fell behind (sleep, debugger): drop the backlog rather than catch up
-        for (int i = 0; i < scene.Orbs.Count; i++) synth.SetMotion(i, scene.Orbs[i].Freq, scene.Orbs[i].Speed);
-        if (fading) { Opacity -= 0.08; if (Opacity <= 0.05) { anim.Stop(); Close(); } }
+        if (steps > 0) for (int i = 0; i < scene.Orbs.Count; i++) synth.SetMotion(i, scene.Orbs[i].Freq, scene.Orbs[i].Speed);
+        if (fading)
+        {
+            double o = 1 - (now - fadeStart) / 0.4; // 400 ms, longer than the sound's fade plus its queue
+            if (o <= 0.05) { closing = true; pumping = false; Close(); } else Opacity = o;
+        }
     }
 
     static GraphicsPath Rounded(RectangleF r, float radius)
@@ -473,53 +543,83 @@ class Loader : Form
         p.CloseFigure(); return p;
     }
 
-    protected override void OnPaint(PaintEventArgs e)
+    // Sky over a meadow, a bright haze at the horizon, soft glowing rings at the edge: drawn once.
+    Bitmap BuildScenery()
     {
-        var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
-        g.ScaleTransform(scale, scale);
-        float t = demoTime >= 0 ? demoTime : clock.ElapsedMilliseconds / 1000f;
-        // Sky over a meadow, a bright haze at the horizon, soft glowing rings at the edge.
-        using (var sky = new LinearGradientBrush(new Rectangle(0, 0, W, 170), Sky, SkyLow, 90f)) g.FillRectangle(sky, 0, 0, W, 170);
-        using (var grass = new LinearGradientBrush(new Rectangle(0, 165, W, H - 165), Grass, GrassLow, 90f)) g.FillRectangle(grass, 0, 165, W, H - 165);
-        using (var haze = new LinearGradientBrush(new Rectangle(0, 140, W, 40), Color.FromArgb(0, 255, 255, 255), Color.FromArgb(150, 255, 255, 255), 90f)) g.FillRectangle(haze, 0, 140, W, 30);
-        using (var path = Rounded(new RectangleF(14, 14, W - 28, H - 28), 24))
-            for (int i = 6; i >= 1; i--)
-                using (var pen = new Pen(Color.FromArgb(16 * (7 - i), i % 2 == 0 ? Aqua : Color.White), i * 2)) g.DrawPath(pen, path);
-        // Orbs, big ones last so they read as nearer; each is a pre-drawn sprite placed in device pixels.
-        var order = new int[scene.Orbs.Count]; for (int i = 0; i < order.Length; i++) order[i] = i;
-        Array.Sort(order, (a, b) => scene.Orbs[a].R.CompareTo(scene.Orbs[b].R));
-        var saved = g.Transform; g.ResetTransform();
-        foreach (int i in order) { var o = scene.Orbs[i]; g.DrawImage(sprites[i], (o.X - o.R * 1.1f) * scale, (o.Y - o.R * 1.1f) * scale); }
-        g.Transform = saved;
-        foreach (var h in scene.Hits)
-            if (h[2] >= 0) using (var pen = new Pen(Color.FromArgb((int)(220 * (1 - h[2])), Color.White), 3)) { float r = 6 + h[2] * 34; g.DrawEllipse(pen, h[0] - r, h[1] - r, 2 * r, 2 * r); }
-        // The wordmark with a dark halo so it reads over any orb, then the honest progress line
-        // (hide, DevTools, focus, console, paste, paste, run, verified).
-        using (var font = new Font("Segoe UI", 22, FontStyle.Bold))
+        var bmp = new Bitmap(Width, Height, PixelFormat.Format32bppPArgb);
+        using (var g = Graphics.FromImage(bmp))
+        {
+            g.Clear(Ink); g.SmoothingMode = SmoothingMode.AntiAlias; g.ScaleTransform(scale, scale);
+            using (var sky = new LinearGradientBrush(new Rectangle(0, 0, W, 170), Sky, SkyLow, 90f)) g.FillRectangle(sky, 0, 0, W, 170);
+            using (var grass = new LinearGradientBrush(new Rectangle(0, 165, W, H - 165), Grass, GrassLow, 90f)) g.FillRectangle(grass, 0, 165, W, H - 165);
+            using (var haze = new LinearGradientBrush(new Rectangle(0, 140, W, 40), Color.FromArgb(0, 255, 255, 255), Color.FromArgb(150, 255, 255, 255), 90f)) g.FillRectangle(haze, 0, 140, W, 30);
+            using (var path = Rounded(new RectangleF(14, 14, W - 28, H - 28), 24))
+                for (int i = 6; i >= 1; i--)
+                    using (var pen = new Pen(Color.FromArgb(16 * (7 - i), i % 2 == 0 ? Aqua : Color.White), i * 2)) g.DrawPath(pen, path);
+        }
+        return bmp;
+    }
+
+    // The wordmark with a dark halo so it reads over any orb: drawn once, on a strip from 200 to 250 design units down.
+    Bitmap BuildWordmark()
+    {
+        var bmp = new Bitmap(Width, (int)Math.Ceiling(50 * scale), PixelFormat.Format32bppPArgb);
+        using (var g = Graphics.FromImage(bmp))
+        using (var font = new Font("Segoe UI", 88f / 3, FontStyle.Bold, GraphicsUnit.Pixel)) // in design units, so the strip fits at any DPI
         using (var fmt = new StringFormat { Alignment = StringAlignment.Center })
         {
+            g.SmoothingMode = SmoothingMode.AntiAlias; g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+            g.ScaleTransform(scale, scale); g.TranslateTransform(0, -200);
             for (int i = 3; i >= 1; i--) using (var b = new SolidBrush(Color.FromArgb(45, Ink))) g.DrawString("Claude", font, b, W / 2f, 206 + i, fmt);
             using (var b = new SolidBrush(Color.FromArgb(250, 255, 255, 255))) g.DrawString("Claude", font, b, W / 2f, 206, fmt);
         }
+        return bmp;
+    }
+
+    protected override void OnPaintBackground(PaintEventArgs e) { } // the scenery covers every pixel
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        float t = demoTime >= 0 ? demoTime : clock.ElapsedMilliseconds / 1000f;
+        // Physics steps at 60 Hz; each frame carries the orbs on to this exact moment, so motion is smooth at any frame rate.
+        float ahead = demoTime >= 0 ? 0 : (float)Math.Max(0, Math.Min(1, (clock.Elapsed.TotalSeconds - simulated) / Scene.Step));
+        g.CompositingQuality = CompositingQuality.HighSpeed; g.SmoothingMode = SmoothingMode.None; g.PixelOffsetMode = PixelOffsetMode.Half;
+        g.InterpolationMode = InterpolationMode.NearestNeighbor; g.CompositingMode = CompositingMode.SourceCopy;
+        g.DrawImage(scenery, 0, 0, scenery.Width, scenery.Height);
+        g.CompositingMode = CompositingMode.SourceOver;
+        // Orbs, big ones last so they read as nearer; bilinear so they glide by fractions of a pixel instead of stepping.
+        g.InterpolationMode = InterpolationMode.Bilinear;
+        var order = new int[scene.Orbs.Count]; for (int i = 0; i < order.Length; i++) order[i] = i;
+        Array.Sort(order, (a, b) => scene.Orbs[a].R.CompareTo(scene.Orbs[b].R));
+        foreach (int i in order)
+        {
+            var o = scene.Orbs[i]; var sprite = sprites[i];
+            g.DrawImage(sprite, new RectangleF((o.X + o.Vx * ahead - o.R * 1.1f) * scale, (o.Y + o.Vy * ahead - o.R * 1.1f) * scale, sprite.Width, sprite.Height));
+        }
+        g.InterpolationMode = InterpolationMode.NearestNeighbor;
+        g.DrawImage(wordmark, 0, (int)(200 * scale), wordmark.Width, wordmark.Height);
+        g.PixelOffsetMode = PixelOffsetMode.Default; g.SmoothingMode = SmoothingMode.AntiAlias; g.ScaleTransform(scale, scale);
+        foreach (var h in scene.Hits)
+            if (h[2] >= 0) using (var pen = new Pen(Color.FromArgb((int)(220 * (1 - h[2])), Color.White), 3)) { float r = 6 + h[2] * 34; g.DrawEllipse(pen, h[0] - r, h[1] - r, 2 * r, 2 * r); }
+        // The honest progress line (hide, DevTools, focus, console, paste, paste, run, verified).
         var bar = new RectangleF(60, 258, W - 120, 5);
         using (var path = Rounded(bar, 2)) using (var b = new SolidBrush(Color.FromArgb(90, Ink))) g.FillPath(b, path);
         var fill = new RectangleF(bar.X, bar.Y, Math.Max(5, bar.Width * progress), bar.Height);
         Color[] cycle = { Lime, Aqua, Pink, Amber }; Color c1 = cycle[(int)(t / 1.5f) % 4], c2 = cycle[((int)(t / 1.5f) + 1) % 4];
         using (var path = Rounded(fill, 2)) using (var b = new LinearGradientBrush(bar, c1, c2, 0f)) g.FillPath(b, path);
         // Scanlines (pre-drawn, drifting) and a slow bright band like a CRT refresh.
-        g.ResetTransform();
-        g.DrawImage(scanlines, 0, (int)(t * 12) % 3 - 3);
-        g.Transform = saved;
+        var saved = g.Transform; g.ResetTransform(); g.SmoothingMode = SmoothingMode.None; g.PixelOffsetMode = PixelOffsetMode.Half;
+        g.FillRectangles(scanlineBrush, scanlines[(int)(t * 12) % 3]);
+        g.Transform = saved; g.SmoothingMode = SmoothingMode.AntiAlias; g.PixelOffsetMode = PixelOffsetMode.Default;
         int band = (int)(t * 30) % (H + 60) - 30;
         using (var sweep = new LinearGradientBrush(new Rectangle(0, band, W, 30), Color.FromArgb(0, 255, 255, 255), Color.FromArgb(30, 255, 255, 255), 90f)) g.FillRectangle(sweep, 0, band, W, 30);
     }
 
-    // A glass sphere drawn once into a bitmap: contact shadow, see-through body with a tinted rim, a dark
-    // refracted edge at the lower right, a chrome ring, a broad specular highlight at the upper left, a sharp dot.
     static Bitmap OrbSprite(Orb o, float scale)
     {
         float R = o.R; int size = (int)Math.Ceiling(R * 2.2f * scale);
-        var bmp = new Bitmap(size, size);
+        var bmp = new Bitmap(size, size, PixelFormat.Format32bppPArgb);
         using (var g = Graphics.FromImage(bmp))
         {
             g.SmoothingMode = SmoothingMode.AntiAlias; g.ScaleTransform(scale, scale);
