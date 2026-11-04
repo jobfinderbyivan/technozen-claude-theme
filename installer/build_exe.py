@@ -5,7 +5,7 @@ import pathlib
 import subprocess
 import sys
 
-VERSION = "1.2.4"   # shown in the installer's title bar and used for the release file name
+VERSION = "1.3.0"   # shown in the installer's title bar and used for the release file name
 HERE = pathlib.Path(__file__).parent
 SNIPPET = HERE.parent / "dist" / "technozen.snippet.js"
 CSC = pathlib.Path(r"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe")
@@ -25,9 +25,9 @@ def main():
         f'    public const string Version = "{VERSION}";\n'
         '    public static readonly string Text = System.Text.Encoding.UTF8.GetString(System.Convert.FromBase64String("' + b64 + '"));\n'
         "}\n", encoding="utf-8", newline="\n")
-    cmd = [str(CSC), "/nologo", "/target:winexe", "/optimize+", f"/out:{OUT}",
+    cmd = [str(CSC), "/nologo", "/target:winexe", "/optimize+", f"/out:{OUT}", f"/win32manifest:{HERE / 'app.manifest'}",
            "/r:System.Windows.Forms.dll", "/r:System.Drawing.dll", "/r:Microsoft.CSharp.dll",
-           str(HERE / "TechnozenInstaller.cs"), str(HERE / "Snippet.cs")]
+           str(HERE / "TechnozenInstaller.cs"), str(HERE / "Orbs.cs"), str(HERE / "Snippet.cs")]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         sys.exit(r.stdout + r.stderr)

@@ -30,6 +30,7 @@ static class Program
         if (args.Length > 0 && args[0] == "--watch") { Watcher.Run(); return; }
         if (args.Length > 1 && args[0] == "--check") { File.WriteAllText(args[1], Paths.Report()); return; }
         if (args.Length > 1 && args[0] == "--demo") { Loader.RenderDemo(args[1]); return; }
+        if (args.Length > 1 && args[0] == "--selftest") { Environment.Exit(SelfTest.Run(args[1])); return; }
         Application.Run(new MainForm());
     }
 }
@@ -233,7 +234,8 @@ class Watcher : ApplicationContext
     const string MutexName = "Local\\TechnozenForClaudeWatcher";
     readonly System.Windows.Forms.Timer poll = new System.Windows.Forms.Timer { Interval = 100 };
     readonly Dictionary<int, bool> handled = new Dictionary<int, bool>();
-    int pid; IntPtr mainWindow; Loader loader; bool injecting; Stopwatch since;
+    int pid, idleTicks; IntPtr mainWindow; Loader loader; bool injecting; Stopwatch since;
+    readonly Dictionary<int, bool> known = new Dictionary<int, bool>();
 
     public static bool IsRunning()
     {
@@ -266,9 +268,18 @@ class Watcher : ApplicationContext
     {
         if (pid == 0)
         {
+            // Idle: look for Claude only every half second (process queries are not free), and remember
+            // which pids are the app so each is inspected once.
+            if (++idleTicks % 5 != 0) return;
+            var roots = new List<Process>();
+            foreach (Process p in Process.GetProcessesByName("claude"))
+            {
+                bool isApp; if (!known.TryGetValue(p.Id, out isApp)) { isApp = Paths.IsClaudeApp(p); known[p.Id] = isApp; }
+                if (isApp) roots.Add(p);
+            }
+            if (known.Count > 200) known.Clear();
             // Claude is many processes (renderers, GPU, utilities); the one that owns the windows is the
             // root, which started first.
-            var roots = new List<Process>(Paths.AppProcesses());
             roots.Sort((a, b) => a.StartTime.CompareTo(b.StartTime));
             if (roots.Count > 0)
             {
@@ -280,7 +291,7 @@ class Watcher : ApplicationContext
                 bool waiting = Native.WindowsOf(p.Id).Exists(w => Native.IsDevToolsTitle(w.Key));
                 if (!fresh && !waiting) { handled[p.Id] = true; return; }
                 pid = p.Id; since = Stopwatch.StartNew(); mainWindow = IntPtr.Zero; injecting = false;
-                loader = new Loader(); loader.Show();
+                loader = new Loader(); loader.Show(); loader.Begin();
                 Log("claude " + pid + " seen, card shown");
             }
             foreach (int old in new List<int>(handled.Keys)) try { Process.GetProcessById(old); } catch { handled.Remove(old); }
@@ -370,35 +381,62 @@ class Watcher : ApplicationContext
     }
 }
 
-// The loading card: a phosphor-green CRT tile with scanlines, a bobbing water drop, a progress bar,
-// and ripples where the mouse goes. It never takes keyboard focus, so the typed theme cannot land in it.
+// The start-up card: Y2K glass orbs over a meadow, each humming, ringing like bells when they collide,
+// pushed around by the mouse. It never takes keyboard focus, so the typed theme cannot land in it.
+// Per-monitor DPI aware: everything is laid out in 460x300 design units and scaled once.
 class Loader : Form
 {
-    static readonly Color Navy = Color.FromArgb(11, 42, 63), Lime = Color.FromArgb(196, 242, 78), Aqua = Color.FromArgb(46, 211, 196),
-                          Pink = Color.FromArgb(255, 110, 199), Amber = Color.FromArgb(242, 179, 91), Ink = Color.FromArgb(7, 28, 43);
+    static readonly Color Lime = Color.FromArgb(196, 242, 78), Aqua = Color.FromArgb(46, 211, 196), Pink = Color.FromArgb(255, 110, 199),
+                          Amber = Color.FromArgb(242, 179, 91), Ink = Color.FromArgb(7, 28, 43), Sky = Color.FromArgb(125, 200, 250),
+                          SkyLow = Color.FromArgb(214, 238, 255), Grass = Color.FromArgb(150, 220, 70), GrassLow = Color.FromArgb(70, 160, 45);
+    const int W = 460, H = 300;
     readonly System.Windows.Forms.Timer anim = new System.Windows.Forms.Timer { Interval = 33 };
-    readonly List<float[]> ripples = new List<float[]>(); // x, y, radius, age
     readonly Stopwatch clock = Stopwatch.StartNew();
+    readonly Scene scene; readonly Synth synth = new Synth();
+    readonly float scale; // device pixels per design unit
+    readonly Bitmap[] sprites; readonly Bitmap scanlines; // orbs never change size or tint, so they are drawn once
+    double simulated; // seconds of physics already stepped; real time is stepped in 1/60 s slices
+    float demoTime = -1; // --demo renders at a fixed time so the image is reproducible
     volatile float progress; // real progress only: set by the helper at each milestone, never by time
     bool fading;
 
     public void Progress(float p) { progress = p; }
 
-    public Loader()
+    public Loader() : this(Environment.TickCount) { }
+
+    Loader(int seed)
     {
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(460, 300);
+        AutoScaleMode = AutoScaleMode.None;
+        scale = DeviceDpi / 96f;
+        ClientSize = new Size((int)(W * scale), (int)(H * scale));
         TopMost = true;
         ShowInTaskbar = true;
         Text = "Claude";
         BackColor = Ink;
         DoubleBuffered = true;
-        using (var path = Rounded(new Rectangle(0, 0, Width, Height), 30)) Region = new Region(path);
+        using (var path = Rounded(new RectangleF(0, 0, Width, Height), 30 * scale)) Region = new Region(path);
+        scene = new Scene(new Random(seed), new RectangleF(18, 18, W - 36, H - 36));
+        scene.Struck = (a, b, loud) => synth.Strike(a.Freq, b.Freq, loud);
+        sprites = new Bitmap[scene.Orbs.Count];
+        for (int i = 0; i < sprites.Length; i++) sprites[i] = OrbSprite(scene.Orbs[i], scale);
+        scanlines = new Bitmap(Width, Height + 3);
+        using (var g = Graphics.FromImage(scanlines)) using (var line = new SolidBrush(Color.FromArgb(28, 0, 0, 0)))
+            for (int y = 0; y < scanlines.Height; y += 3) g.FillRectangle(line, 0, y, scanlines.Width, 1);
         anim.Tick += (s, e) => { Tickle(); Invalidate(); };
+        MouseMove += (s, e) => { scene.MouseX = e.X / scale; scene.MouseY = e.Y / scale; };
+        MouseLeave += (s, e) => { scene.MouseX = -1e6f; scene.MouseY = -1e6f; };
+        FormClosed += (s, e) => synth.Dispose();
+    }
+
+    // Called once the card is shown: opens the sound device and starts animating. --demo never calls it.
+    public void Begin()
+    {
+        bool sound = synth.Start();
+        string hum = ""; foreach (var o in scene.Orbs) hum += o.Freq.ToString("0") + " ";
+        Watcher.Log("card: " + scene.Orbs.Count + " orbs at " + hum + "Hz, sound " + (sound ? "on" : "off") + ", scale " + scale.ToString("0.00"));
         anim.Start();
-        MouseMove += (s, e) => { if (clock.ElapsedMilliseconds % 4 == 0) ripples.Add(new[] { e.X, e.Y, 4f, 0f }); };
-        MouseDown += (s, e) => { for (int i = 0; i < 3; i++) ripples.Add(new[] { e.X, e.Y, 4f + i * 6, 0f }); };
     }
 
     protected override bool ShowWithoutActivation { get { return true; } }
@@ -411,13 +449,16 @@ class Loader : Form
 
     void Tickle()
     {
-        for (int i = ripples.Count - 1; i >= 0; i--) { ripples[i][2] += 2.2f; ripples[i][3] += 0.04f; if (ripples[i][3] >= 1) ripples.RemoveAt(i); }
+        double now = clock.Elapsed.TotalSeconds; int steps = 0;
+        while (simulated + Scene.Step <= now && steps < 4) { scene.Tick(); simulated += Scene.Step; steps++; }
+        if (simulated + Scene.Step <= now) simulated = now; // fell behind (sleep, debugger): drop the backlog rather than catch up
+        for (int i = 0; i < scene.Orbs.Count; i++) synth.SetMotion(i, scene.Orbs[i].Freq, scene.Orbs[i].Speed);
         if (fading) { Opacity -= 0.08; if (Opacity <= 0.05) { anim.Stop(); Close(); } }
     }
 
-    static GraphicsPath Rounded(Rectangle r, int radius)
+    static GraphicsPath Rounded(RectangleF r, float radius)
     {
-        var p = new GraphicsPath(); int d = radius * 2;
+        var p = new GraphicsPath(); float d = radius * 2;
         p.AddArc(r.X, r.Y, d, d, 180, 90); p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
         p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90); p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
         p.CloseFigure(); return p;
@@ -426,61 +467,86 @@ class Loader : Form
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
-        float t = clock.ElapsedMilliseconds / 1000f;
-        var face = new Rectangle(14, 14, Width - 28, Height - 28);
-        // Tube face: deep navy with a phosphor-green glow in the middle, soft glowing border rings.
-        using (var bg = new LinearGradientBrush(ClientRectangle, Navy, Ink, 90f)) g.FillRectangle(bg, ClientRectangle);
-        using (var path = Rounded(face, 24))
-        {
-            using (var glow = new PathGradientBrush(path)) { glow.CenterColor = Color.FromArgb(70, Lime); glow.SurroundColors = new[] { Color.FromArgb(0, Lime) }; g.FillPath(glow, path); }
+        g.ScaleTransform(scale, scale);
+        float t = demoTime >= 0 ? demoTime : clock.ElapsedMilliseconds / 1000f;
+        // Sky over a meadow, a bright haze at the horizon, soft glowing rings at the edge.
+        using (var sky = new LinearGradientBrush(new Rectangle(0, 0, W, 170), Sky, SkyLow, 90f)) g.FillRectangle(sky, 0, 0, W, 170);
+        using (var grass = new LinearGradientBrush(new Rectangle(0, 165, W, H - 165), Grass, GrassLow, 90f)) g.FillRectangle(grass, 0, 165, W, H - 165);
+        using (var haze = new LinearGradientBrush(new Rectangle(0, 140, W, 40), Color.FromArgb(0, 255, 255, 255), Color.FromArgb(150, 255, 255, 255), 90f)) g.FillRectangle(haze, 0, 140, W, 30);
+        using (var path = Rounded(new RectangleF(14, 14, W - 28, H - 28), 24))
             for (int i = 6; i >= 1; i--)
-                using (var pen = new Pen(Color.FromArgb(18 * (7 - i), i % 2 == 0 ? Aqua : Lime), i * 2)) g.DrawPath(pen, path);
-        }
-        // The Claude mark, reimagined as water: twelve glossy rays, breathing and turning slowly,
-        // each a rounded capsule of aqua-to-lime with a specular highlight along its upper-left edge.
-        float cx = Width / 2f, cy = 118 + (float)Math.Sin(t * 2.2) * 4, breathe = 1f + 0.04f * (float)Math.Sin(t * 2.2);
-        using (var halo = new PathGradientBrush(new[] { new PointF(cx - 90, cy - 90), new PointF(cx + 90, cy - 90), new PointF(cx + 90, cy + 90), new PointF(cx - 90, cy + 90) }))
-        { halo.CenterColor = Color.FromArgb(90, Aqua); halo.SurroundColors = new[] { Color.FromArgb(0, Aqua) }; g.FillEllipse(halo, cx - 90, cy - 90, 180, 180); }
-        for (int i = 0; i < 12; i++)
-        {
-            double a = (i * 30 + t * 12) * Math.PI / 180; float len = (i % 3 == 0 ? 58 : i % 3 == 1 ? 46 : 52) * breathe;
-            float x0 = cx + (float)Math.Cos(a) * 11, y0 = cy + (float)Math.Sin(a) * 11, x1 = cx + (float)Math.Cos(a) * len, y1 = cy + (float)Math.Sin(a) * len;
-            using (var sh = new Pen(Color.FromArgb(70, Ink), 17) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawLine(sh, x0 + 3, y0 + 4, x1 + 3, y1 + 4);
-            using (var body = new Pen(new LinearGradientBrush(new PointF(x0, y0), new PointF(x1, y1), Aqua, Lime), 14) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawLine(body, x0, y0, x1, y1);
-            using (var hi = new Pen(Color.FromArgb(170, 255, 255, 255), 4) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawLine(hi, x0 - 2, y0 - 3, x0 + (x1 - x0) * 0.6f - 2, y0 + (y1 - y0) * 0.6f - 3);
-        }
-        using (var core = new SolidBrush(Color.FromArgb(235, 255, 255, 255))) g.FillEllipse(core, cx - 9, cy - 9, 18, 18);
-        // The wordmark, wet: a soft glow under it, then the crisp letters.
+                using (var pen = new Pen(Color.FromArgb(16 * (7 - i), i % 2 == 0 ? Aqua : Color.White), i * 2)) g.DrawPath(pen, path);
+        // Orbs, big ones last so they read as nearer; each is a pre-drawn sprite placed in device pixels.
+        var order = new int[scene.Orbs.Count]; for (int i = 0; i < order.Length; i++) order[i] = i;
+        Array.Sort(order, (a, b) => scene.Orbs[a].R.CompareTo(scene.Orbs[b].R));
+        var saved = g.Transform; g.ResetTransform();
+        foreach (int i in order) { var o = scene.Orbs[i]; g.DrawImage(sprites[i], (o.X - o.R * 1.1f) * scale, (o.Y - o.R * 1.1f) * scale); }
+        g.Transform = saved;
+        foreach (var h in scene.Hits)
+            if (h[2] >= 0) using (var pen = new Pen(Color.FromArgb((int)(220 * (1 - h[2])), Color.White), 3)) { float r = 6 + h[2] * 34; g.DrawEllipse(pen, h[0] - r, h[1] - r, 2 * r, 2 * r); }
+        // The wordmark with a dark halo so it reads over any orb, then the honest progress line
+        // (hide, DevTools, focus, console, paste, paste, run, verified).
         using (var font = new Font("Segoe UI", 22, FontStyle.Bold))
         using (var fmt = new StringFormat { Alignment = StringAlignment.Center })
         {
-            for (int i = 3; i >= 1; i--) using (var b = new SolidBrush(Color.FromArgb(28, Lime))) g.DrawString("Claude", font, b, cx, 196 + i, fmt);
-            using (var b = new SolidBrush(Color.FromArgb(244, 255, 228))) g.DrawString("Claude", font, b, cx, 196, fmt);
+            for (int i = 3; i >= 1; i--) using (var b = new SolidBrush(Color.FromArgb(45, Ink))) g.DrawString("Claude", font, b, W / 2f, 206 + i, fmt);
+            using (var b = new SolidBrush(Color.FromArgb(250, 255, 255, 255))) g.DrawString("Claude", font, b, W / 2f, 206, fmt);
         }
-        // A thin progress line that follows the actual steps (hide, DevTools, focus, console, paste,
-        // paste, run, verified); colors drifting lime -> aqua -> pink -> amber.
-        var bar = new Rectangle(60, 254, Width - 120, 5);
-        using (var path = Rounded(bar, 2)) using (var b = new SolidBrush(Color.FromArgb(110, Ink))) g.FillPath(b, path);
-        var fill = new Rectangle(bar.X, bar.Y, Math.Max(5, (int)(bar.Width * progress)), bar.Height);
+        var bar = new RectangleF(60, 258, W - 120, 5);
+        using (var path = Rounded(bar, 2)) using (var b = new SolidBrush(Color.FromArgb(90, Ink))) g.FillPath(b, path);
+        var fill = new RectangleF(bar.X, bar.Y, Math.Max(5, bar.Width * progress), bar.Height);
         Color[] cycle = { Lime, Aqua, Pink, Amber }; Color c1 = cycle[(int)(t / 1.5f) % 4], c2 = cycle[((int)(t / 1.5f) + 1) % 4];
         using (var path = Rounded(fill, 2)) using (var b = new LinearGradientBrush(bar, c1, c2, 0f)) g.FillPath(b, path);
-        // Ripples from the mouse.
-        foreach (var r in ripples) using (var pen = new Pen(Color.FromArgb((int)(160 * (1 - r[3])), Pink), 2)) g.DrawEllipse(pen, r[0] - r[2], r[1] - r[2], r[2] * 2, r[2] * 2);
-        // Scanlines drifting down, and a slow bright band sweeping like a CRT refresh.
-        int off = (int)(t * 40) % 3;
-        using (var line = new SolidBrush(Color.FromArgb(55, 0, 0, 0))) for (int y = off; y < Height; y += 3) g.FillRectangle(line, 0, y, Width, 1);
-        int band = (int)(t * 90) % (Height + 60) - 30;
-        using (var sweep = new LinearGradientBrush(new Rectangle(0, band, Width, 30), Color.FromArgb(0, Lime), Color.FromArgb(26, Lime), 90f)) g.FillRectangle(sweep, 0, band, Width, 30);
+        // Scanlines (pre-drawn, drifting) and a slow bright band like a CRT refresh.
+        g.ResetTransform();
+        g.DrawImage(scanlines, 0, (int)(t * 40) % 3 - 3);
+        g.Transform = saved;
+        int band = (int)(t * 90) % (H + 60) - 30;
+        using (var sweep = new LinearGradientBrush(new Rectangle(0, band, W, 30), Color.FromArgb(0, 255, 255, 255), Color.FromArgb(30, 255, 255, 255), 90f)) g.FillRectangle(sweep, 0, band, W, 30);
     }
 
-    // Draws two frames to PNG files so the card can be checked without a desktop session.
+    // A glass sphere drawn once into a bitmap: contact shadow, see-through body with a tinted rim, a dark
+    // refracted edge at the lower right, a chrome ring, a broad specular highlight at the upper left, a sharp dot.
+    static Bitmap OrbSprite(Orb o, float scale)
+    {
+        float R = o.R; int size = (int)Math.Ceiling(R * 2.2f * scale);
+        var bmp = new Bitmap(size, size);
+        using (var g = Graphics.FromImage(bmp))
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias; g.ScaleTransform(scale, scale);
+            float cx = R * 1.1f, cy = R * 1.1f; var box = new RectangleF(cx - R, cy - R, 2 * R, 2 * R);
+            using (var sh = new SolidBrush(Color.FromArgb(55, Ink))) g.FillEllipse(sh, cx - R * 0.8f, cy + R * 0.7f, R * 1.6f, R * 0.4f);
+            using (var path = new GraphicsPath())
+            {
+                path.AddEllipse(box);
+                using (var body = new PathGradientBrush(path))
+                {
+                    body.CenterPoint = new PointF(cx - R * 0.15f, cy - R * 0.15f);
+                    body.CenterColor = Color.FromArgb(40, o.Tint);
+                    body.SurroundColors = new[] { Color.FromArgb(185, o.Tint) };
+                    g.FillPath(body, path);
+                }
+            }
+            using (var rim = new Pen(Color.FromArgb(90, 10, 40, 60), R * 0.12f)) g.DrawArc(rim, box.X + R * 0.06f, box.Y + R * 0.06f, box.Width - R * 0.12f, box.Height - R * 0.12f, 20, 140);
+            using (var chrome = new Pen(Color.FromArgb(150, 255, 255, 255), 1.6f)) g.DrawEllipse(chrome, box);
+            using (var hi = new PathGradientBrush(new[] { new PointF(cx - R * 0.75f, cy - R * 0.8f), new PointF(cx + R * 0.1f, cy - R * 0.8f), new PointF(cx + R * 0.1f, cy - R * 0.2f), new PointF(cx - R * 0.75f, cy - R * 0.2f) }))
+            { hi.CenterColor = Color.FromArgb(225, 255, 255, 255); hi.SurroundColors = new[] { Color.FromArgb(0, 255, 255, 255) }; g.FillEllipse(hi, cx - R * 0.75f, cy - R * 0.8f, R * 0.85f, R * 0.6f); }
+            using (var dot = new SolidBrush(Color.White)) g.FillEllipse(dot, cx - R * 0.5f, cy - R * 0.62f, R * 0.16f, R * 0.12f);
+            using (var low = new SolidBrush(Color.FromArgb(70, 255, 255, 255))) g.FillEllipse(low, cx - R * 0.35f, cy + R * 0.45f, R * 0.7f, R * 0.22f);
+        }
+        return bmp;
+    }
+
+    // Draws one frame to a PNG so the card can be checked without a desktop or a sound device: a fixed
+    // seed, a fixed clock, a few physics steps, one collision flash and the bar at 60 percent.
     public static void RenderDemo(string pngPath)
     {
-        var f = new Loader(); f.anim.Stop(); f.progress = 0.6f;
-        f.ripples.Add(new[] { 120f, 160f, 20f, 0.3f }); f.ripples.Add(new[] { 120f, 160f, 40f, 0.6f });
+        var f = new Loader(7); f.demoTime = 2.0f; f.progress = 0.6f;
+        for (int i = 0; i < 30; i++) f.scene.Tick();
+        f.scene.Hits.Add(new[] { f.scene.Orbs[0].X + f.scene.Orbs[0].R, f.scene.Orbs[0].Y, 0.3f });
         using (var bmp = new Bitmap(f.Width, f.Height))
         {
-            using (var g = Graphics.FromImage(bmp)) f.OnPaint(new PaintEventArgs(g, f.ClientRectangle));
+            using (var g = Graphics.FromImage(bmp)) { g.Clear(Ink); f.OnPaint(new PaintEventArgs(g, f.ClientRectangle)); }
             bmp.Save(pngPath, ImageFormat.Png);
         }
     }
