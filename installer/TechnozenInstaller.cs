@@ -249,13 +249,12 @@ class Watcher : ApplicationContext
         foreach (var w in Native.WindowsOf(pid))
         {
             if (Native.IsDevToolsTitle(w.Key)) devtools = w.Value;
-            else if (mainWindow == IntPtr.Zero) { mainWindow = w.Value; Native.ShowWindow(mainWindow, Native.SW_HIDE); loader.Status("hiding the white..."); Log("main window '" + w.Key + "' hidden"); }
+            else if (mainWindow == IntPtr.Zero) { mainWindow = w.Value; Native.ShowWindow(mainWindow, Native.SW_HIDE); Log("main window '" + w.Key + "' hidden"); }
         }
         if (devtools != IntPtr.Zero && !injecting)
         {
             injecting = true;
             Native.SetWindowPos(devtools, IntPtr.Zero, -32000, -32000, 0, 0, Native.SWP_NOSIZE | Native.SWP_NOZORDER | Native.SWP_NOACTIVATE); // parked off-screen, still focusable
-            loader.Status("pouring the theme in...");
             Log("devtools window found after " + since.ElapsedMilliseconds + " ms, injecting");
             var t = new Thread(() =>
             {
@@ -276,7 +275,6 @@ class Watcher : ApplicationContext
         Log("finish ok=" + ok + " after " + since.ElapsedMilliseconds + " ms");
         handled[pid] = true;
         if (mainWindow != IntPtr.Zero) { Native.ShowWindow(mainWindow, Native.SW_SHOW); Native.SetForegroundWindow(mainWindow); }
-        loader.Status(ok ? "ready" : "could not apply; opening Claude");
         loader.FadeOut();
         pid = 0; injecting = false;
     }
@@ -319,7 +317,6 @@ class Loader : Form
     readonly System.Windows.Forms.Timer anim = new System.Windows.Forms.Timer { Interval = 33 };
     readonly List<float[]> ripples = new List<float[]>(); // x, y, radius, age
     readonly Stopwatch clock = Stopwatch.StartNew();
-    string status = "warming up the tube...";
     bool fading;
 
     public Loader()
@@ -329,7 +326,7 @@ class Loader : Form
         ClientSize = new Size(460, 300);
         TopMost = true;
         ShowInTaskbar = true;
-        Text = "Claude (Technozen)";
+        Text = "Claude";
         BackColor = Ink;
         DoubleBuffered = true;
         using (var path = Rounded(new Rectangle(0, 0, Width, Height), 30)) Region = new Region(path);
@@ -345,7 +342,6 @@ class Loader : Form
         get { var cp = base.CreateParams; cp.ExStyle |= 0x08000000 | 0x00000008; return cp; } // WS_EX_NOACTIVATE | WS_EX_TOPMOST
     }
 
-    public void Status(string s) { status = s; }
     public void FadeOut() { fading = true; }
 
     void Tickle()
@@ -375,28 +371,33 @@ class Loader : Form
             for (int i = 6; i >= 1; i--)
                 using (var pen = new Pen(Color.FromArgb(18 * (7 - i), i % 2 == 0 ? Aqua : Lime), i * 2)) g.DrawPath(pen, path);
         }
-        // Title with a soft glow, then the crisp text.
-        using (var big = new Font("Consolas", 30, FontStyle.Bold))
+        // The Claude mark, reimagined as water: twelve glossy rays, breathing and turning slowly,
+        // each a rounded capsule of aqua-to-lime with a specular highlight along its upper-left edge.
+        float cx = Width / 2f, cy = 118 + (float)Math.Sin(t * 2.2) * 4, breathe = 1f + 0.04f * (float)Math.Sin(t * 2.2);
+        using (var halo = new PathGradientBrush(new[] { new PointF(cx - 90, cy - 90), new PointF(cx + 90, cy - 90), new PointF(cx + 90, cy + 90), new PointF(cx - 90, cy + 90) }))
+        { halo.CenterColor = Color.FromArgb(90, Aqua); halo.SurroundColors = new[] { Color.FromArgb(0, Aqua) }; g.FillEllipse(halo, cx - 90, cy - 90, 180, 180); }
+        for (int i = 0; i < 12; i++)
         {
-            for (int i = 4; i >= 1; i--) using (var b = new SolidBrush(Color.FromArgb(30, Lime))) g.DrawString("TECHNOZEN", big, b, 40 - i, 40 + i);
-            using (var b = new SolidBrush(Lime)) g.DrawString("TECHNOZEN", big, b, 40, 40);
+            double a = (i * 30 + t * 12) * Math.PI / 180; float len = (i % 3 == 0 ? 58 : i % 3 == 1 ? 46 : 52) * breathe;
+            float x0 = cx + (float)Math.Cos(a) * 11, y0 = cy + (float)Math.Sin(a) * 11, x1 = cx + (float)Math.Cos(a) * len, y1 = cy + (float)Math.Sin(a) * len;
+            using (var sh = new Pen(Color.FromArgb(70, Ink), 17) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawLine(sh, x0 + 3, y0 + 4, x1 + 3, y1 + 4);
+            using (var body = new Pen(new LinearGradientBrush(new PointF(x0, y0), new PointF(x1, y1), Aqua, Lime), 14) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawLine(body, x0, y0, x1, y1);
+            using (var hi = new Pen(Color.FromArgb(170, 255, 255, 255), 4) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawLine(hi, x0 - 2, y0 - 3, x0 + (x1 - x0) * 0.6f - 2, y0 + (y1 - y0) * 0.6f - 3);
         }
-        using (var small = new Font("Consolas", 11, FontStyle.Bold))
-        using (var b = new SolidBrush(Pink)) g.DrawString("for Claude  " + new string('.', 1 + (int)(t * 3) % 3), small, b, 44, 90);
-        using (var small = new Font("Consolas", 10))
-        using (var b = new SolidBrush(Aqua)) g.DrawString(status.ToUpperInvariant(), small, b, 44, 236);
-        // The water drop, bobbing, with its highlight.
-        float bob = (float)Math.Sin(t * 3) * 7;
-        var drop = new RectangleF(330, 70 + bob, 70, 84);
-        using (var sh = new SolidBrush(Color.FromArgb(60, Ink))) g.FillEllipse(sh, drop.X + 6, drop.Bottom - 10, 62, 18);
-        using (var body = new LinearGradientBrush(drop, Aqua, Color.FromArgb(14, 100, 130), 70f)) g.FillEllipse(body, drop);
-        using (var hi = new SolidBrush(Color.FromArgb(220, 255, 255, 255))) g.FillEllipse(hi, drop.X + 14, drop.Y + 12, 22, 14);
-        // Progress: fills over about eight seconds, colors drifting lime -> aqua -> pink -> amber.
-        var bar = new Rectangle(44, 200, Width - 88, 14);
-        using (var path = Rounded(bar, 7)) using (var b = new SolidBrush(Color.FromArgb(90, Ink))) g.FillPath(b, path);
-        float frac = Math.Min(1f, t / 8f); var fill = new Rectangle(bar.X, bar.Y, Math.Max(14, (int)(bar.Width * frac)), bar.Height);
+        using (var core = new SolidBrush(Color.FromArgb(235, 255, 255, 255))) g.FillEllipse(core, cx - 9, cy - 9, 18, 18);
+        // The wordmark, wet: a soft glow under it, then the crisp letters.
+        using (var font = new Font("Segoe UI", 22, FontStyle.Bold))
+        using (var fmt = new StringFormat { Alignment = StringAlignment.Center })
+        {
+            for (int i = 3; i >= 1; i--) using (var b = new SolidBrush(Color.FromArgb(28, Lime))) g.DrawString("Claude", font, b, cx, 196 + i, fmt);
+            using (var b = new SolidBrush(Color.FromArgb(244, 255, 228))) g.DrawString("Claude", font, b, cx, 196, fmt);
+        }
+        // A thin progress line, filling over about six seconds, colors drifting lime -> aqua -> pink -> amber.
+        var bar = new Rectangle(60, 254, Width - 120, 5);
+        using (var path = Rounded(bar, 2)) using (var b = new SolidBrush(Color.FromArgb(110, Ink))) g.FillPath(b, path);
+        float frac = Math.Min(1f, t / 6f); var fill = new Rectangle(bar.X, bar.Y, Math.Max(5, (int)(bar.Width * frac)), bar.Height);
         Color[] cycle = { Lime, Aqua, Pink, Amber }; Color c1 = cycle[(int)(t / 1.5f) % 4], c2 = cycle[((int)(t / 1.5f) + 1) % 4];
-        using (var path = Rounded(fill, 7)) using (var b = new LinearGradientBrush(bar, c1, c2, 0f)) g.FillPath(b, path);
+        using (var path = Rounded(fill, 2)) using (var b = new LinearGradientBrush(bar, c1, c2, 0f)) g.FillPath(b, path);
         // Ripples from the mouse.
         foreach (var r in ripples) using (var pen = new Pen(Color.FromArgb((int)(160 * (1 - r[3])), Pink), 2)) g.DrawEllipse(pen, r[0] - r[2], r[1] - r[2], r[2] * 2, r[2] * 2);
         // Scanlines drifting down, and a slow bright band sweeping like a CRT refresh.
