@@ -156,7 +156,8 @@ def skin_css(slug):
 
 def snippet():
     # The drift check compares painted backgrounds against these; rgb() is what getComputedStyle returns.
-    paint = {slug: {"mode": t["mode"], "paint": ["rgb(%d, %d, %d)" % rgb(t[k]) for k in ("bg", "surface")]}
+    paint = {slug: {"name": t["name"], "mode": t["mode"], "accent": t["accent"], "bg": t["bg"],
+                    "paint": ["rgb(%d, %d, %d)" % rgb(t[k]) for k in ("bg", "surface")]}
              for slug, t in THEMES.items()}
     template = (ROOT / "snippet.template.js").read_text(encoding="utf-8")
     # json.dumps makes the CSS a plain quoted string, so no backtick or ${} escaping to get wrong.

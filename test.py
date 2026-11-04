@@ -143,7 +143,8 @@ def test_js():
         text = (DIST / file).read_text(encoding="utf-8")
         check(text.count("{") == text.count("}"), f"{file}: unbalanced braces")
         check("</script" not in text.lower(), f"{file}: contains </script>")
-        check("`" not in text, f"{file}: contains a backtick, the CSS string must stay JSON-quoted")
+        check(text.count("`") % 2 == 0 and "${CSS" not in text, f"{file}: template literals must be balanced and never wrap the CSS")
+        check('id: "technozen-panel"' in text and ".tz-swatch" in text, f"{file}: the floating panel is missing")
         check(len(text) < 400_000, f"{file}: {len(text) // 1024} KB is too big to paste comfortably (limit 400 KB)")
         if shutil.which("node"):
             r = subprocess.run(["node", "--check", str(DIST / file)], capture_output=True, text=True)

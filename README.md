@@ -18,7 +18,8 @@ The desktop app has no theme setting yet ([anthropics/claude-code#79305](https:/
 2. Click the **Console** tab, paste the whole of [`dist/technozen.snippet.js`](dist/technozen.snippet.js), press **Enter**. Close DevTools.
 3. Done. The app is now in Shiro Ceramic.
 
-- **Ctrl+Alt+T** cycles to the next theme. **Ctrl+Alt+S** switches the skin off and on (skin off = colors only, Claude's own shapes). **Ctrl+Alt+0** removes everything.
+- A small panel appears in the bottom-right corner: click a swatch to switch theme, tick **skin** for the full skin or untick it for colors only, **×** removes the theme, the round button folds the panel away. Everything is remembered.
+- Hotkeys do the same: **Ctrl+Alt+T** cycles to the next theme, **Ctrl+Alt+S** switches the skin off and on, **Ctrl+Alt+0** removes everything.
 - Your choice is remembered. After restarting Claude: Ctrl+Shift+I, Console, press the **Up arrow** to recall the snippet, Enter. It comes back in the theme you left it in. (If you prefer, save it under DevTools > Sources > Snippets and run it with Ctrl+Enter.)
 - From the DevTools console you can also run `technozen.apply("mizu")` or `technozen.remove()`.
 - If you change Claude's own Appearance setting while a theme is on, cycle Ctrl+Alt+T back round to your theme, or run `technozen.apply("take")` in the console.
