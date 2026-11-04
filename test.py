@@ -101,6 +101,14 @@ def test_css():
         skin = build.ROOT / "skins" / f"{slug}.css"
         check(skin.exists(), f"skins/{slug}.css is missing")
         check(f'html[data-technozen="{slug}"][data-technozen-skin="on"] {{' in text, f"css: no skin block for {slug}")
+        block = build.skin_css(slug).split("\n}\n", 1)[0]
+        check("@keyframes" not in block, f"css: {slug} skin has @keyframes nested inside the theme block (the browser drops those)")
+        src = skin.read_text(encoding="utf-8")
+        # hooks that no longer exist in the app (see NOTES.md), and :has() which is re-evaluated on every DOM change
+        for stale in ("data-radix", 'data-testid="user-message"', "data-user-message-bubble", "data-frame-mode", "button.cds-reset", ":has("):
+            check(stale not in src, f"skins/{slug}.css uses {stale}, which is stale or too slow for a streaming transcript")
+    wanted = sum((build.ROOT / "skins" / f"{s}.css").read_text(encoding="utf-8").count("@keyframes") for s in THEMES)
+    check(text.count("@keyframes") == wanted, f"css: expected {wanted} @keyframes, found {text.count('@keyframes')}")
     text = text[:text.index('[data-technozen-skin="on"]')]  # the palette checks below are about the color blocks only
     sample = variables(next(iter(THEMES.values())))
     for slug in THEMES:

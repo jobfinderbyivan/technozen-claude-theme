@@ -2,6 +2,7 @@
 import colorsys
 import json
 import pathlib
+import re
 import urllib.parse
 
 ROOT = pathlib.Path(__file__).parent
@@ -103,8 +104,8 @@ def variables(t):
         "--cds-fizzy-lake-color-selected-hover": alpha(gl, 80),
         "--df-hover": alpha(gl, 45), "--df-selected": alpha(gl, 75), "--df-selected-base": gl,
     }
-    # Older claude.ai tokens, bare HSL. --bg-000 is the lightest surface (popovers), --bg-100 the
-    # page; the app applies its own alpha to --border-*, so those hold a full-strength color.
+    # Older claude.ai tokens, bare HSL. --bg-000 = popovers, --bg-100 = page; --border-* get the
+    # app's own alpha, so they hold a full-strength color.
     triplets = {
         "--bg-000": sf, "--bg-100": bg, "--bg-200": sf, "--bg-300": sf, "--bg-400": bd, "--bg-500": bd,
         "--text-000": tx, "--text-100": tx, "--text-200": tx, "--text-300": mu, "--text-400": mu, "--text-500": mu,
@@ -116,8 +117,7 @@ def variables(t):
         "--df-z0": bg, "--df-z1": sf, "--df-z2": sf, "--df-z3": bd, "--df-z4": bd, "--df-z5": mu, "--df-z6": mu,
         "--df-bg-page-hsl": bg,
     }
-    # The app also has a mode-flipping neutral ramp (0 = page, 900 = ink) that Tailwind classes like
-    # dark:bg-neutral-30 paint from. Stock is near-linear, so a straight mix from bg to text matches it.
+    # The app's mode-flipping neutral ramp (0 = page, 900 = ink), near-linear in stock, so a mix fits.
     neutral = {f"--cds-neutral-{n}": mix(bg, tx, n / 900) for n in NEUTRAL_STEPS}
     out = dict(hexes)
     out.update(neutral)
@@ -139,13 +139,16 @@ def css():
 
 
 def skin_css(slug):
-    """skins/<slug>.css, nested under the theme + skin-on selector (CSS nesting, Chrome 120+).
-    Images are inlined as data: URIs so the snippet stays one self-contained paste."""
+    """skins/<slug>.css nested under the theme + skin-on selector; images inlined as data: URIs."""
     text = (ROOT / "skins" / f"{slug}.css").read_text(encoding="utf-8")
     if "__LEAF__" in text:
         import leaf
         text = text.replace("__LEAF__", "data:image/svg+xml," + urllib.parse.quote(leaf.svg(), safe="/:=.,;' -_()"))
-    return f'html[data-technozen="{slug}"][data-technozen-skin="on"] {{\n{text}\n}}'
+    # @keyframes cannot sit inside a nested rule (the parser drops them), so they are hoisted out.
+    frames = re.findall(r"@keyframes[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}", text)
+    for frame in frames:
+        text = text.replace(frame, "")
+    return f'html[data-technozen="{slug}"][data-technozen-skin="on"] {{\n{text}\n}}\n' + "\n".join(frames)
 
 
 def snippet():
@@ -173,9 +176,8 @@ def userscript():
 
 
 def cli_theme(slug, t):
-    """Claude Code CLI only paints a few things; the terminal owns the background, so text colors
-    are left to the base preset and only accents and fills are set."""
-    # Shimmer is the LIGHTER color in the spinner gradient; on dark themes glow is dark, so lift it.
+    """CLI themes set only accents and fills: the terminal owns the background and text colors.
+    Shimmer is the LIGHTER color in the spinner gradient; on dark themes glow is dark, so lift it."""
     shimmer = t["glow"] if t["mode"] == "light" else mix(t["accent"], t["text"], 0.5)
     return {
         "name": "Technozen " + t["name"],

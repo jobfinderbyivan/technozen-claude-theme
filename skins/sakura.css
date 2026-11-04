@@ -1,25 +1,74 @@
-/* Sakura skin: blossom petals drifting over pale wood. First pass. */
+/* Sakura skin: pink washi paper on a light-wood shelf, lacquer buttons, petals in the top-right.
+   Nested by build.py under html[data-technozen="sakura"][data-technozen-skin="on"]. */
+&, & * {
+  --df-bg-page: transparent !important;
+  --cds-surface-0: rgba(255, 248, 247, 0.84) !important;
+  --cds-surface-3: rgba(255, 248, 247, 0.92) !important;
+  --cds-fill-primary: #bc4e68 !important;          /* lacquer */
+  --cds-fill-primary-hover: #c95f78 !important;
+  --cds-on-primary: #ffffff !important;
+}
+/* Washi grain is a tiny tiled noise SVG at 5% over the paper color. */
 & {
   background:
-    radial-gradient(ellipse 14px 9px at 12% 18%, rgba(252, 201, 185, 0.9) 60%, transparent 62%),
-    radial-gradient(ellipse 10px 7px at 78% 32%, rgba(252, 201, 185, 0.8) 60%, transparent 62%),
-    radial-gradient(ellipse 12px 8px at 40% 74%, rgba(243, 160, 170, 0.75) 60%, transparent 62%),
-    radial-gradient(ellipse 8px 5px at 90% 80%, rgba(252, 201, 185, 0.85) 60%, transparent 62%),
-    radial-gradient(ellipse 11px 7px at 60% 12%, rgba(243, 160, 170, 0.7) 60%, transparent 62%),
-    repeating-linear-gradient(90deg, rgba(156, 122, 102, 0.05) 0 2px, transparent 2px 23px),
-    linear-gradient(180deg, #fdf3f1, #f7e6e2) !important;
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 .3 0 0 0 0 .2 0 0 0 0 .2 0 0 0 .05 0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23g)'/%3E%3C/svg%3E") repeat,
+    radial-gradient(50vw 40vh at 10% 100%, rgba(252, 201, 185, 0.5), transparent 70%),
+    linear-gradient(180deg, #fcefef, #f8e6e3) !important;
   background-attachment: fixed !important;
 }
-/* The app paints its page color on body with these classes; let the html background through. */
-.bg-surface-1, .bg-surface-2, main {
+.bg-surface-1, .bg-surface-2, .dframe-root, .dframe-content, .dframe-pane, main {
   background-color: transparent !important;
 }
-nav, aside, .dframe-sidebar, [data-cds="Panel"], [data-cds="Card"], [role="dialog"], [data-cds-popup] {
-  border-radius: 20px;
-  box-shadow: inset 0 1px 0 #fff, 0 8px 24px rgba(120, 70, 70, 0.1);
+/* Petals, drifting slowly across the top-right corner. */
+&::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 9px 13px at 82% 8%, #fcc9b9 60%, transparent 62%),
+    radial-gradient(ellipse 8px 12px at 90% 16%, #f7b8c4 60%, transparent 62%),
+    radial-gradient(ellipse 7px 11px at 76% 22%, #fcc9b9 60%, transparent 62%),
+    radial-gradient(ellipse 9px 13px at 95% 30%, #f3a0aa 60%, transparent 62%),
+    radial-gradient(ellipse 6px 10px at 86% 38%, #fcc9b9 60%, transparent 62%),
+    radial-gradient(ellipse 8px 12px at 70% 44%, #f7b8c4 60%, transparent 62%),
+    radial-gradient(ellipse 7px 11px at 93% 58%, #fcc9b9 60%, transparent 62%);
+  opacity: 0.55;
+  animation: technozen-drift 40s ease-in-out infinite alternate;
 }
-[data-cds="Button"], button.cds-reset {
-  border-radius: 999px !important;
-  background: linear-gradient(180deg, #fff8f7, #f6e3e1) !important;
-  box-shadow: inset 0 1px 0 #fff, 0 2px 6px rgba(120, 70, 70, 0.15) !important;
+@keyframes technozen-drift { to { transform: translate(-30px, 60px) rotate(6deg); } }
+@media (prefers-reduced-motion: reduce) { &::after { animation: none; } }
+/* Sidebar is the wood shelf: three grain periods so the lines never repeat cleanly. */
+nav, aside, .dframe-sidebar {
+  background:
+    repeating-linear-gradient(90deg, rgba(120, 90, 60, 0.06) 0 2px, transparent 2px 7px),
+    repeating-linear-gradient(90deg, rgba(120, 90, 60, 0.05) 0 1px, transparent 1px 11px),
+    repeating-linear-gradient(90deg, rgba(120, 90, 60, 0.04) 0 3px, transparent 3px 19px),
+    linear-gradient(90deg, #ead9c7, #e2cdb7) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+[data-cds="Panel"], [data-cds="Card"] > .cds-card-fill, [data-cds="Dialog"], [role="dialog"], [data-cds-popup], [data-cds="Popover"], [data-cds="Menu"] {
+  border-radius: 14px;
+  border: 1px solid #ebd3d1;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 8px 24px rgba(74, 58, 58, 0.1);
+}
+/* Buttons: lacquer blocks, rounded squares, a thin varnish line on top. */
+[data-cds="Button"] {
+  border-radius: 12px !important;
+  border: 0 !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 0 0 1px rgba(156, 122, 102, 0.35), 0 3px 8px rgba(74, 58, 58, 0.12) !important;
+  transition: transform 0.15s, box-shadow 0.15s, filter 0.15s;
+}
+[data-cds="Button"]:hover {
+  transform: translateY(-1px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 0 0 4px rgba(252, 201, 185, 0.6), 0 3px 8px rgba(74, 58, 58, 0.12) !important;
+}
+[data-cds="Button"]:active {
+  filter: brightness(0.94);
+}
+h1, h2 {
+  font-family: "Yu Mincho", "Hiragino Mincho ProN", Georgia, serif !important;
+  font-weight: 400 !important;
+  letter-spacing: 0.02em;
 }

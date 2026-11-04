@@ -1,9 +1,11 @@
 /* Take skin: a wet green leaf, UI made of water drops. build.py nests this file under
    html[data-technozen="take"][data-technozen-skin="on"], so plain selectors here mean
-   "inside the app while this skin is on". The leaf placeholder in url() becomes the generated image. */
+   "inside the app while this skin is on". The leaf placeholder in url() becomes the generated image.
+   Hooks are the app's own data-cds / .dframe-* names (see NOTES.md), never generated class names. */
 
 /* Surfaces go translucent so the leaf shows through everything. */
 &, & * {
+  --df-bg-page: transparent !important;
   --cds-fizzy-lake-color-sidebar: rgba(255, 255, 255, 0.42) !important;
   --df-sidebar-bg: rgba(255, 255, 255, 0.42) !important;
   --df-web-sidebar-bg: rgba(255, 255, 255, 0.42) !important;
@@ -12,7 +14,10 @@
   --cds-surface-panel: rgba(255, 255, 255, 0.72) !important;
   --cds-surface-popover: rgba(255, 255, 255, 0.82) !important;
   --cds-fill-field: rgba(255, 255, 255, 0.6) !important;
-  --cds-bg-user-message: rgba(255, 255, 255, 0.5) !important;
+  --cds-bg-user-message: rgba(255, 255, 255, 0.55) !important;
+  --cds-message-bubble-radius: 26px !important;
+  --msg-block-radius: 16px !important;
+  --cds-radius-composer: 24px !important;
   --cds-fill-primary: rgba(255, 255, 255, 0.4) !important;
   --cds-on-primary: #263028 !important;
   --cds-fill-primary-hover: rgba(255, 255, 255, 0.6) !important;
@@ -21,41 +26,49 @@
   --cds-text-primary: #263028 !important;
 }
 
-/* The leaf goes on <html>; the app paints its page color on body and containers with these
-   utility classes, so they become transparent to let it through. */
+/* The leaf goes on <html>; the app paints its page color on body and on these containers,
+   so they become transparent to let it through. */
 & {
   background: #7fd130 url("__LEAF__") center / cover fixed !important;
 }
-.bg-surface-1, .bg-surface-2, .bg-page, .dframe-root, .dframe-pane, main {
+.bg-surface-1, .bg-surface-2, .dframe-root, .dframe-content, .dframe-pane, main {
   background-color: transparent !important;
 }
 
-/* Frosted-glass panels: sidebar, cards, menus, dialogs. */
-nav, aside, .dframe-sidebar, [data-cds="Panel"], [data-cds="Card"],
-[role="dialog"], [data-cds-popup], [data-radix-popper-content-wrapper] > * {
+/* Frosted-glass panels. Blur is costly, so only the few big surfaces get it. */
+nav, aside, .dframe-sidebar, [data-cds="Panel"], [data-cds="Card"] > .cds-card-fill,
+[data-cds="Dialog"], [role="dialog"], [data-cds-popup], [data-cds="Popover"], [data-cds="Menu"] {
   border-radius: 22px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 0 0 1px rgba(255, 255, 255, 0.45),
     0 10px 30px rgba(0, 60, 0, 0.25);
 }
-/* Blur is costly, so only the three big surfaces get it: sidebar, menus, dialogs. */
-nav, aside, .dframe-sidebar, [role="dialog"], [data-cds-popup] {
+nav, aside, .dframe-sidebar, [data-cds="Dialog"], [role="dialog"], [data-cds-popup], [data-cds="ChatComposer"] {
   backdrop-filter: blur(14px) saturate(1.4);
 }
+[data-row] {
+  border-radius: 999px !important;
+}
 
-/* Every button is a water drop: glassy, a little taller than wide, dark lettering.
-   A CDS button paints its fill on an inner span (.cds-btn-squish, z-index -1), so the glossy
-   body lives on that span and the specular highlight on the span's ::before; both stay under the label. */
-[data-cds="Button"], button.cds-reset {
-  min-height: 2.8em;
-  padding: 0.35em 1.2em;
-  border-radius: 50% 50% 50% 50% / 56% 56% 44% 44% !important;
+/* Every button is a water drop: text buttons are long drops (the space bar), icon-only buttons
+   are the oval keys. A CDS button paints its fill on an inner span ([data-cds-part="paint"], also
+   .cds-btn-squish, at z-index -1): the glossy body lives on that span and the specular highlight
+   on the span's ::before, so both stay under the label. */
+[data-cds="Button"] {
+  min-height: 2.6em;
+  padding: 0.3em 1.2em;
+  border-radius: 999px !important;
   border: 0 !important;
   color: #263028 !important;
   text-shadow: 0 1px 0 rgba(255, 255, 255, 0.55);
   box-shadow: 0 6px 14px rgba(0, 60, 0, 0.35), 0 1px 2px rgba(0, 60, 0, 0.3) !important;
   transition: transform 0.15s, box-shadow 0.15s;
 }
-[data-cds="Button"] > .cds-btn-squish, button.cds-reset:not(:has(.cds-btn-squish)) {
+[data-cds="Button"][data-cds-icon-only] {
+  aspect-ratio: 44 / 52;
+  padding: 0 !important;
+  border-radius: 50% 50% 50% 50% / 46% 46% 54% 54% !important;
+}
+[data-cds="Button"] > [data-cds-part="paint"], [data-cds="Button"] > .cds-btn-squish {
   overflow: hidden;
   background:
     radial-gradient(ellipse 60% 45% at 50% 108%, rgba(255, 255, 255, 0.6), transparent 70%),
@@ -65,7 +78,7 @@ nav, aside, .dframe-sidebar, [role="dialog"], [data-cds-popup] {
     inset 0 -8px 12px rgba(0, 70, 0, 0.25),
     inset 0 0 0 1px rgba(255, 255, 255, 0.4) !important;
 }
-[data-cds="Button"] > .cds-btn-squish::before, button.cds-reset:not(:has(.cds-btn-squish))::before {
+[data-cds="Button"] > [data-cds-part="paint"]::before, [data-cds="Button"] > .cds-btn-squish::before {
   content: "";
   position: absolute;
   left: 12%;
@@ -76,33 +89,27 @@ nav, aside, .dframe-sidebar, [role="dialog"], [data-cds-popup] {
   background: radial-gradient(ellipse at 38% 38%, #fff 18%, rgba(255, 255, 255, 0.55) 50%, transparent 100%);
   pointer-events: none;
 }
-[data-cds="Button"]:has(> span:last-child > svg:only-child) {
-  aspect-ratio: 44 / 52;
-  padding: 0 !important;
-  border-radius: 50% 50% 50% 50% / 46% 46% 54% 54% !important;
-}
-[data-cds="Button"]:hover, button.cds-reset:hover {
+[data-cds="Button"]:hover {
   transform: translateY(-1px) scale(1.03);
 }
-[data-cds="Button"]:active, button.cds-reset:active {
+[data-cds="Button"]:active {
   transform: translateY(1px) scale(0.98);
 }
 
 /* Inputs and the composer: a long drop, like the space bar. */
-[data-cds="TextInput"], textarea, .ProseMirror, [contenteditable="true"], form:has(.ProseMirror) > div {
+[data-cds="TextInput"], [data-cds="TextArea"], [data-cds="ChatComposer"], .ProseMirror {
   background: rgba(255, 255, 255, 0.62) !important;
-  border-radius: 999px !important;
+  border-radius: 24px !important;
   box-shadow: inset 0 2px 4px rgba(255, 255, 255, 0.95), inset 0 -6px 12px rgba(0, 70, 0, 0.15),
     0 6px 16px rgba(0, 60, 0, 0.25) !important;
 }
-.ProseMirror, [contenteditable="true"], form:has(.ProseMirror) > div {
-  border-radius: 24px !important;
+[data-cds="TextInput"] {
+  border-radius: 999px !important;
 }
 
-/* Your own messages: a drop-shaped glass bubble. */
-[data-cds="UserMessage"], [data-testid="user-message"], [data-user-message-bubble="true"] {
-  border-radius: 26px 26px 8px 26px !important;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 6px 14px rgba(0, 60, 0, 0.22) !important;
+/* Your own messages: a drop-shaped glass bubble (radius comes from the variable above). */
+[data-cds="UserMessage"] > * {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 6px 14px rgba(0, 60, 0, 0.22);
 }
 
 /* Headlines as wet, glossy text. */
@@ -112,13 +119,12 @@ h1, h2 {
 }
 
 /* Code blocks stay readable. */
-pre, .code-block__code {
+pre, .code-block__code, .epitaxy-codeblock {
   background: rgba(255, 255, 255, 0.78) !important;
-  border-radius: 16px !important;
 }
 
-/* Thin, wet scrollbars. */
-* {
-  scrollbar-color: rgba(255, 255, 255, 0.6) transparent !important;
+/* Thin, wet scrollbars (variables only on '*', per the perf notes). */
+.dframe-root, .ProseMirror, [data-cds="Panel"] {
+  scrollbar-color: rgba(255, 255, 255, 0.6) transparent;
   scrollbar-width: thin;
 }

@@ -1,24 +1,62 @@
-/* Shiro skin: white ceramic. Wii-menu tiles, diffuse light, almost no shadow. First pass. */
+/* Shiro skin: Wii-menu ceramic. White and matte silver, one glossy Wii-blue button, diffuse light,
+   no hard shadows. Nested by build.py under html[data-technozen="shiro"][data-technozen-skin="on"]. */
 &, & * {
-  --cds-surface-0: #f4f6f8 !important;
+  --df-bg-page: transparent !important;
+  --cds-surface-0: rgba(255, 255, 255, 0.78) !important;
   --cds-surface-3: #ffffff !important;
+  --cds-fizzy-lake-color-sidebar: #f1f4f7 !important;
+  --df-sidebar-bg: #f1f4f7 !important;
+  --df-web-sidebar-bg: #f1f4f7 !important;
+  --cds-fill-primary: #2f8fe0 !important;          /* the one Wii-blue element */
+  --cds-fill-primary-hover: #3a97e8 !important;
+  --cds-on-primary: #ffffff !important;
 }
 & {
-  background: linear-gradient(180deg, #ffffff 0%, #eef2f5 100%) fixed !important;
+  background:
+    radial-gradient(55vw 40vh at 85% 0%, rgba(207, 234, 247, 0.6), transparent 70%),
+    linear-gradient(180deg, #ffffff 0%, #f3f5f7 100%) fixed !important;
 }
-/* The app paints its page color on body with these classes; let the html background through. */
-.bg-surface-1, .bg-surface-2, main {
+.bg-surface-1, .bg-surface-2, .dframe-root, .dframe-content, .dframe-pane, main {
   background-color: transparent !important;
 }
-nav, aside, .dframe-sidebar, [data-cds="Panel"], [data-cds="Card"], [role="dialog"], [data-cds-popup] {
+/* Sidebar is matte silver with a varnish line on its right edge. */
+nav, aside, .dframe-sidebar {
+  background: linear-gradient(90deg, #f3f5f7, #edf0f3) !important;
+  box-shadow: inset -1px 0 0 #ffffff, inset 0 1px 0 #ffffff;
+}
+[data-cds="Panel"], [data-cds="Card"] > .cds-card-fill, [data-cds="Dialog"], [role="dialog"], [data-cds-popup], [data-cds="Popover"], [data-cds="Menu"] {
   border-radius: 18px;
-  box-shadow: inset 0 1px 0 #fff, 0 1px 2px rgba(30, 40, 50, 0.06), 0 12px 40px rgba(30, 60, 90, 0.08);
+  border: 1px solid #dde2e6;
+  box-shadow: inset 0 1px 0 #ffffff, 0 10px 28px rgba(43, 47, 51, 0.08);
 }
-[data-cds="Button"], button.cds-reset {
-  border-radius: 14px !important;
-  background: linear-gradient(180deg, #ffffff, #eef1f4) !important;
-  box-shadow: inset 0 1px 0 #fff, inset 0 -1px 0 rgba(0, 0, 0, 0.05), 0 2px 6px rgba(30, 60, 90, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.04) !important;
+/* Buttons: ceramic tiles; every button gets the classic split-gloss on its top half. */
+[data-cds="Button"] {
+  border-radius: 999px !important;
+  border: 0 !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 0 0 1px rgba(43, 47, 51, 0.08), 0 4px 12px rgba(43, 47, 51, 0.08) !important;
+  transition: filter 0.15s, box-shadow 0.15s, transform 0.1s;
 }
-[data-cds="Button"]:hover, button.cds-reset:hover {
-  box-shadow: inset 0 1px 0 #fff, 0 0 0 3px rgba(30, 127, 211, 0.18), 0 4px 10px rgba(30, 60, 90, 0.14) !important;
+[data-cds="Button"] > [data-cds-part="paint"]::before, [data-cds="Button"] > .cds-btn-squish::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 50% 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.1));
+  pointer-events: none;
+}
+[data-cds="Button"]:hover {
+  filter: brightness(1.05);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 0 0 4px #cfeaf7, 0 4px 12px rgba(43, 47, 51, 0.1) !important;
+}
+[data-cds="Button"]:active {
+  transform: translateY(1px);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.18) !important;
+}
+/* The composer sits on a Wii-style bar: a glowing blue line along its top edge. */
+[data-cds="ChatComposer"], .ProseMirror {
+  border-radius: 18px !important;
+  box-shadow: 0 -2px 0 0 #cfeaf7, 0 0 18px rgba(207, 234, 247, 0.9), inset 0 1px 0 #ffffff !important;
+}
+h1, h2 {
+  font-weight: 500 !important;
 }

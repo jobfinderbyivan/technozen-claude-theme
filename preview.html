@@ -1,0 +1,62 @@
+<!doctype html>
+<!-- Preview the generated themes without the Claude app: python -m http.server, then open this file.
+     It mimics the handful of hooks the skins target (data-cds buttons, nav, panel, composer). -->
+<html lang="en" class="cds-root" data-theme="claude" data-color-version="v2" data-mode="light" data-technozen="take" data-technozen-skin="on">
+<head>
+<meta charset="utf-8">
+<title>Technozen preview</title>
+<link rel="stylesheet" href="dist/technozen.css">
+<style>
+  body { margin: 0; min-height: 100vh; font-family: system-ui, sans-serif; color: var(--cds-text-primary); background: var(--cds-page-bg); }
+  nav { position: fixed; inset: 0 auto 0 0; width: 240px; padding: 16px; box-sizing: border-box; background: var(--cds-fizzy-lake-color-sidebar); }
+  main { margin-left: 240px; padding: 32px; display: flex; flex-direction: column; gap: 24px; max-width: 760px; }
+  .item { padding: 8px 12px; border-radius: 10px; margin-bottom: 4px; }
+  .item.selected { background: var(--cds-fill-ghost-selected); }
+  [data-cds="Panel"] { padding: 20px; background: var(--cds-surface-3); }
+  [data-cds="Button"] { position: relative; isolate: isolate; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 40px; padding: 0 16px; border: 0; border-radius: 10px; font: inherit; cursor: pointer; background: transparent; color: inherit; }
+  [data-cds="Button"] .cds-btn-squish { position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: var(--cds-fill-secondary); }
+  [data-cds="Button"][data-variant="primary"] .cds-btn-squish { background: var(--cds-fill-primary); }
+  [data-cds="Button"][data-variant="primary"] { color: var(--cds-on-primary); }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  [data-cds="UserMessage"] { align-self: flex-end; max-width: 70%; padding: 12px 16px; border-radius: 18px; background: var(--cds-bg-user-message); }
+  .ProseMirror { min-height: 56px; padding: 14px 16px; border-radius: 18px; background: var(--cds-fill-field); box-shadow: 0 0 0 1px var(--cds-border); }
+  pre { padding: 14px; border-radius: 12px; background: var(--cds-surface-0); }
+  .switch { position: fixed; top: 12px; right: 12px; display: flex; gap: 6px; }
+  .switch button { font: inherit; }
+</style>
+</head>
+<body class="bg-surface-1">
+<nav>
+  <div class="item">New chat</div>
+  <div class="item selected">Technozen for Claude</div>
+  <div class="item">Earlier conversation</div>
+  <div class="item">Another one</div>
+</nav>
+<main>
+  <h1>Question what's next</h1>
+  <div data-cds="Panel">
+    <p>A panel. The quick brown fox jumps over the lazy dog, and a <a href="#" style="color: var(--cds-text-accent)">link</a> reads in the accent color.</p>
+    <div class="row">
+      <button data-cds="Button" data-variant="primary"><span class="cds-btn-squish" data-cds-part="paint"></span><span>Send</span></button>
+      <button data-cds="Button" data-cds-ghost=""><span class="cds-btn-squish" data-cds-part="paint"></span><span>Secondary</span></button>
+      <button data-cds="Button" data-cds-icon-only="" title="icon only"><span class="cds-btn-squish" data-cds-part="paint"></span><span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></span></button>
+    </div>
+  </div>
+  <div data-cds="UserMessage">This is my message to Claude.</div>
+  <p>This is Claude's reply, sitting straight on the page. It should stay readable on every background.</p>
+  <pre><code>def hello():
+    return "world"</code></pre>
+  <div class="ProseMirror" contenteditable="true">Reply to Claude...</div>
+</main>
+<div class="switch">
+  <button onclick="setTheme('shiro')">shiro</button><button onclick="setTheme('take')">take</button><button onclick="setTheme('sakura')">sakura</button><button onclick="setTheme('mizu')">mizu</button><button onclick="setTheme('yoru')">yoru</button>
+  <button onclick="h.dataset.technozenSkin = h.dataset.technozenSkin === 'on' ? 'off' : 'on'">skin</button>
+</div>
+<script>
+  const h = document.documentElement;
+  const MODES = { shiro: "light", take: "light", sakura: "light", mizu: "dark", yoru: "dark" };
+  function setTheme(slug) { h.dataset.technozen = slug; h.dataset.mode = MODES[slug]; }
+  if (location.hash) setTheme(location.hash.slice(1));
+</script>
+</body>
+</html>

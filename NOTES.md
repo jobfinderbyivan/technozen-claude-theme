@@ -65,6 +65,8 @@ What the live page allows, checked on claude.ai in Chrome 152 (the desktop app's
 
 Hooks that exist on the sign-in page and in the reference projects' chat selectors: `[data-cds="Button"]` (with an inner `span.cds-btn-squish` at z-index -1 that paints the fill; the droplet gloss lives on that span so it stays under the label), `[data-cds="TextInput"]`, `[data-cds="Field"]`, `[data-cds="Form"]` (a bare wrapper, do not style it as a panel), `nav`, `[data-cds="Panel"]`, `[data-cds="Card"]`, `[data-cds="UserMessage"]`, `.ProseMirror`, `.dframe-sidebar`. The page color is painted by `body.bg-surface-1`; the leaf therefore goes on `<html>` and `.bg-surface-1/2` are made transparent in the Take skin.
 
+Two parser facts that cost time: `@keyframes` placed inside a nested rule are silently dropped (build.py hoists them to the top level, and test.py checks that none remain nested), and a CDS button paints its fill on an inner `span.cds-btn-squish` at z-index -1, so any gloss put on the button's own `::before` ends up hidden under that span. `preview.html` reproduces these hooks so the generated CSS can be checked without signing in.
+
 The leaf is `leaf.py`: a lime-to-green gradient, faint veins, fractal-noise cell texture, and 120 seeded droplets (shadow offset lower-right, refracting body gradient, dark rim, blurred upper-left highlight plus a sharp dot). About 60 KB as SVG, 85 KB as a data URI. Compared against the reference image side by side in the browser pane.
 
 ## Known gaps

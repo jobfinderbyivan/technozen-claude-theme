@@ -58,6 +58,18 @@ Each theme has two layers:
 
 Ctrl+Alt+S toggles the skin layer; the choice is remembered separately from the theme.
 
+| Take skin | Shiro | Sakura | Mizu | Yoru |
+|---|---|---|---|---|
+| ![take skin](screenshots/skin-take.jpg) | ![shiro skin](screenshots/skin-shiro.jpg) | ![sakura skin](screenshots/skin-sakura.jpg) | ![mizu skin](screenshots/skin-mizu.jpg) | ![yoru skin](screenshots/skin-yoru.jpg) |
+
+To see any theme without the app, serve the folder and open `preview.html`:
+
+```bash
+python -m http.server 8765
+```
+
+then visit `http://127.0.0.1:8765/preview.html#take` (buttons in the corner switch theme and skin).
+
 ## How it works
 
 One `<style>` element. Five color blocks, each scoped to `html[data-technozen="<slug>"]`, override the app's CSS custom properties with `!important`; five skin blocks are scoped to `html[data-technozen="<slug>"][data-technozen-skin="on"]` and use CSS nesting. Switching changes one attribute on `<html>`; nothing reloads. The app has three layers of variables (the older claude.ai `--bg-*`/`--text-*` HSL triplets, the newer `--cds-*` hex tokens, and the Code tab's `--df-*` frame tokens) and all three are set from the same eight colors. Skins target the app's stable hooks (`data-cds="Button"`, `data-cds="Panel"`, `nav`, `aside`, the `.ProseMirror` composer) rather than its generated class names.
