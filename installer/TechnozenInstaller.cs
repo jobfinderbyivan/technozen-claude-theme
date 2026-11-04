@@ -70,6 +70,47 @@ static class Native
     public static bool IsDevToolsTitle(string t) { return t.Contains("DevTools") || t.Contains("Developer Tools"); }
 }
 
+// While the theme is being typed into DevTools, real clicks and keystrokes are swallowed so nothing can
+// take the keyboard focus away; the helper's own injected input passes. Hooks are installed from the
+// UI thread (they need its message loop) and Windows drops them by itself if the helper dies.
+static class InputShield
+{
+    delegate IntPtr HookProc(int code, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int id, HookProc proc, IntPtr module, uint thread);
+    [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr hook);
+    [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr wParam, IntPtr lParam);
+    [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string name);
+    static readonly HookProc keyProc = KeyHook, mouseProc = MouseHook; // kept alive: the callback must not be collected
+    static IntPtr keyHook, mouseHook;
+
+    public static void On()
+    {
+        IntPtr module = GetModuleHandle(null);
+        if (keyHook == IntPtr.Zero) keyHook = SetWindowsHookEx(13, keyProc, module, 0);   // WH_KEYBOARD_LL
+        if (mouseHook == IntPtr.Zero) mouseHook = SetWindowsHookEx(14, mouseProc, module, 0); // WH_MOUSE_LL
+    }
+
+    public static void Off()
+    {
+        if (keyHook != IntPtr.Zero) { UnhookWindowsHookEx(keyHook); keyHook = IntPtr.Zero; }
+        if (mouseHook != IntPtr.Zero) { UnhookWindowsHookEx(mouseHook); mouseHook = IntPtr.Zero; }
+    }
+
+    static IntPtr KeyHook(int code, IntPtr wParam, IntPtr lParam)
+    {
+        bool injected = (Marshal.ReadInt32(lParam, 8) & 0x10) != 0; // KBDLLHOOKSTRUCT.flags, LLKHF_INJECTED
+        return code >= 0 && !injected ? (IntPtr)1 : CallNextHookEx(keyHook, code, wParam, lParam);
+    }
+
+    static IntPtr MouseHook(int code, IntPtr wParam, IntPtr lParam)
+    {
+        int msg = (int)wParam;
+        bool button = msg >= 0x0201 && msg <= 0x020D && msg != 0x0209 && msg != 0x020A; // any button down/up/double-click, not move or wheel
+        bool injected = (Marshal.ReadInt32(lParam, 12) & 0x01) != 0; // MSLLHOOKSTRUCT.flags, LLMHF_INJECTED
+        return code >= 0 && button && !injected ? (IntPtr)1 : CallNextHookEx(mouseHook, code, wParam, lParam);
+    }
+}
+
 static class Paths
 {
     static readonly string Local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -249,18 +290,20 @@ class Watcher : ApplicationContext
         foreach (var w in Native.WindowsOf(pid))
         {
             if (Native.IsDevToolsTitle(w.Key)) devtools = w.Value;
-            else if (mainWindow == IntPtr.Zero) { mainWindow = w.Value; Native.ShowWindow(mainWindow, Native.SW_HIDE); Log("main window '" + w.Key + "' hidden"); }
+            else if (mainWindow == IntPtr.Zero) { mainWindow = w.Value; Native.ShowWindow(mainWindow, Native.SW_HIDE); loader.Progress(0.1f); Log("main window '" + w.Key + "' hidden"); }
         }
         if (devtools != IntPtr.Zero && !injecting)
         {
             injecting = true;
             Native.SetWindowPos(devtools, IntPtr.Zero, -32000, -32000, 0, 0, Native.SWP_NOSIZE | Native.SWP_NOZORDER | Native.SWP_NOACTIVATE); // parked off-screen, still focusable
+            loader.Progress(0.2f);
             Log("devtools window found after " + since.ElapsedMilliseconds + " ms, injecting");
-            IntPtr main = mainWindow;
+            InputShield.On();
+            IntPtr main = mainWindow; Loader card = loader;
             var t = new Thread(() =>
             {
                 bool ok = false;
-                try { ok = Inject(devtools, main); } catch (Exception ex) { Log("inject error " + ex); }
+                try { ok = Inject(devtools, main, card.Progress); } catch (Exception ex) { Log("inject error " + ex); }
                 Log("inject " + (ok ? "ok" : "failed"));
                 try { loader.BeginInvoke((Action)(() => Finish(ok))); } catch (Exception ex) { Log("finish error " + ex.Message); }
             });
@@ -273,6 +316,7 @@ class Watcher : ApplicationContext
 
     void Finish(bool ok)
     {
+        InputShield.Off();
         Log("finish ok=" + ok + " after " + since.ElapsedMilliseconds + " ms");
         handled[pid] = true;
         if (mainWindow != IntPtr.Zero) { Native.ShowWindow(mainWindow, Native.SW_SHOW); Native.SetForegroundWindow(mainWindow); }
@@ -289,28 +333,35 @@ class Watcher : ApplicationContext
 
     // Paste the theme into the DevTools console, then check it ran; retry otherwise. Keystrokes can land
     // in the wrong place while DevTools is still loading, which is why the check matters.
-    static bool Inject(IntPtr devtools, IntPtr main)
+    static bool Inject(IntPtr devtools, IntPtr main, Action<float> progress)
     {
         Thread.Sleep(2000); // let the DevTools frontend finish loading
         for (int attempt = 0; attempt < 6; attempt++)
         {
+            progress(0.2f);
             try { Clipboard.SetText(Snippet.Text); } catch { Thread.Sleep(500); continue; }
             Native.SetForegroundWindow(devtools);
             Thread.Sleep(300);
             if (Native.GetForegroundWindow() != devtools) { SendKeys.SendWait("%"); Native.SetForegroundWindow(devtools); Thread.Sleep(300); } // the Alt tap lifts Windows' foreground lock
             if (Native.GetForegroundWindow() != devtools) { Log("devtools not in front, retrying"); Thread.Sleep(700); continue; }
+            progress(0.3f);
             // Command menu > "Show Console" puts the cursor in the console prompt whatever panel was open.
             SendKeys.SendWait("^+p"); Thread.Sleep(500);
             SendKeys.SendWait("Show Console"); Thread.Sleep(400);
             SendKeys.SendWait("{ENTER}"); Thread.Sleep(600);
+            progress(0.45f);
             // DevTools blocks the first paste ever with a self-XSS warning until "allow pasting" is typed.
             // Paste, answer the warning, paste again: with the warning the first paste is empty and the
             // second runs; without it the first attempt becomes a syntax error (runs nothing) and the second runs.
             SendKeys.SendWait("^v"); Thread.Sleep(500);
+            progress(0.6f);
             SendKeys.SendWait("allow pasting{ENTER}"); Thread.Sleep(500);
             SendKeys.SendWait("^v"); Thread.Sleep(900);
+            progress(0.8f);
             SendKeys.SendWait("{ENTER}"); Thread.Sleep(900);
+            progress(0.9f);
             if (main != IntPtr.Zero && !ThemeRan(main)) { Log("no marker after attempt " + (attempt + 1) + ", retrying"); Thread.Sleep(1000); continue; }
+            progress(1f);
             Native.PostMessage(devtools, Native.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
             return true;
         }
@@ -328,7 +379,10 @@ class Loader : Form
     readonly System.Windows.Forms.Timer anim = new System.Windows.Forms.Timer { Interval = 33 };
     readonly List<float[]> ripples = new List<float[]>(); // x, y, radius, age
     readonly Stopwatch clock = Stopwatch.StartNew();
+    volatile float progress; // real progress only: set by the helper at each milestone, never by time
     bool fading;
+
+    public void Progress(float p) { progress = p; }
 
     public Loader()
     {
@@ -403,10 +457,11 @@ class Loader : Form
             for (int i = 3; i >= 1; i--) using (var b = new SolidBrush(Color.FromArgb(28, Lime))) g.DrawString("Claude", font, b, cx, 196 + i, fmt);
             using (var b = new SolidBrush(Color.FromArgb(244, 255, 228))) g.DrawString("Claude", font, b, cx, 196, fmt);
         }
-        // A thin progress line, filling over about six seconds, colors drifting lime -> aqua -> pink -> amber.
+        // A thin progress line that follows the actual steps (hide, DevTools, focus, console, paste,
+        // paste, run, verified); colors drifting lime -> aqua -> pink -> amber.
         var bar = new Rectangle(60, 254, Width - 120, 5);
         using (var path = Rounded(bar, 2)) using (var b = new SolidBrush(Color.FromArgb(110, Ink))) g.FillPath(b, path);
-        float frac = Math.Min(1f, t / 6f); var fill = new Rectangle(bar.X, bar.Y, Math.Max(5, (int)(bar.Width * frac)), bar.Height);
+        var fill = new Rectangle(bar.X, bar.Y, Math.Max(5, (int)(bar.Width * progress)), bar.Height);
         Color[] cycle = { Lime, Aqua, Pink, Amber }; Color c1 = cycle[(int)(t / 1.5f) % 4], c2 = cycle[((int)(t / 1.5f) + 1) % 4];
         using (var path = Rounded(fill, 2)) using (var b = new LinearGradientBrush(bar, c1, c2, 0f)) g.FillPath(b, path);
         // Ripples from the mouse.
@@ -421,7 +476,7 @@ class Loader : Form
     // Draws two frames to PNG files so the card can be checked without a desktop session.
     public static void RenderDemo(string pngPath)
     {
-        var f = new Loader(); f.anim.Stop();
+        var f = new Loader(); f.anim.Stop(); f.progress = 0.6f;
         f.ripples.Add(new[] { 120f, 160f, 20f, 0.3f }); f.ripples.Add(new[] { 120f, 160f, 40f, 0.6f });
         using (var bmp = new Bitmap(f.Width, f.Height))
         {
