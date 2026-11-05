@@ -42,7 +42,7 @@
   function startDrops() { if (!window.technozenDropsStop) runDrops().catch(e => { console.warn("[technozen] drops stay painted on the leaf:", e); stopDrops(); }); }
 
   async function runDrops() {
-    let alive = true, raf = 0, timer = 0, resizeTimer = 0, scanTimer = 0, last = 0, spare = 0, activeUntil = 0, lastSample = 0, scrolledAt = -1e9;
+    let alive = true, raf = 0, timer = 0, resizeTimer = 0, scanTimer = 0, zoneTimer = 0, zoneIdle = 0, last = 0, spare = 0, activeUntil = 0, lastSample = 0, scrolledAt = -1e9;
     const off = new AbortController(), on = { passive: true, capture: true, signal: off.signal };
     const canvas = Object.assign(document.createElement("canvas"), { id: "technozen-drops" });
     canvas.style.cssText = "position:fixed;inset:0;width:100%;height:100%;z-index:-1;pointer-events:none";
@@ -53,7 +53,7 @@
     const bounds = { l: 0, t: 0, r: 0, b: 0, s: 1 }, drawnX = new Float64Array(DROPS.drops.length), drawnY = new Float64Array(DROPS.drops.length);
     let io, mo, ro;
     window.technozenDropsStop = () => {
-      alive = false; off.abort(); cancelAnimationFrame(raf); clearTimeout(timer); clearTimeout(resizeTimer); clearTimeout(scanTimer);
+      alive = false; off.abort(); cancelAnimationFrame(raf); clearTimeout(timer); clearTimeout(resizeTimer); clearTimeout(scanTimer); clearTimeout(zoneTimer);
       if (io) io.disconnect(); if (mo) mo.disconnect(); if (ro) ro.disconnect();
       canvas.remove(); delete html.dataset.technozenInteractive; window.technozenDropsStop = null;
     };
@@ -139,16 +139,52 @@
       if (moving.length) wake();
       if (now < activeUntil) schedule(); else shapes = [];
     }
+    // Text boxes and panels the drops ease out of. Found by probing a grid of points, so a huge transcript costs the same as a small one,
+    // and only once the page has been quiet for a second, so nothing runs while Claude is busy loading a chat.
+    const TEXT = "p,li,pre,h1,h2,h3,h4,blockquote,table,[data-cds=UserMessage],.ProseMirror,nav,aside,.dframe-sidebar,[data-cds=Panel],[data-cds=Dialog],[role=dialog],[data-cds-popup],[data-cds=ChatComposer]";
+    function findZones() {
+      zoneTimer = 0;
+      if (!alive || !canvas.isConnected) return;
+      const hits = new Set(), vw = innerWidth, vh = innerHeight, cols = 16, rows = 10;
+      let cell = 0;
+      const probe = idle => { // a few points at a time, only while Claude has nothing else to do
+        zoneIdle = 0;
+        if (!alive) return;
+        do {
+          const el = document.elementFromPoint((cell % cols + 0.5) * vw / cols, (Math.floor(cell / cols) + 0.5) * vh / rows);
+          const box = el && !panel.contains(el) && el.closest(TEXT);
+          if (box) hits.add(box);
+          cell++;
+        } while (cell < cols * rows && idle.timeRemaining() > 1);
+        if (cell < cols * rows) { zoneIdle = requestIdleCallback(probe, { timeout: 1000 }); return; }
+        const boxes = [], gap = vh / rows * 1.1;
+        for (const el of hits) {
+          const r = el.getBoundingClientRect();
+          let z = { x0: r.left, y0: r.top, x1: r.right, y1: r.bottom };
+          for (let i = boxes.length - 1; i >= 0; i--) { // lines of one column become one box
+            const b = boxes[i], sharedWidth = Math.min(z.x1, b.x1) - Math.max(z.x0, b.x0);
+            if (sharedWidth > 0.5 * Math.min(z.x1 - z.x0, b.x1 - b.x0) && z.y0 - b.y1 < gap && b.y0 - z.y1 < gap) {
+              z = { x0: Math.min(z.x0, b.x0), y0: Math.min(z.y0, b.y0), x1: Math.max(z.x1, b.x1), y1: Math.max(z.y1, b.y1) };
+              boxes.splice(i, 1);
+            }
+          }
+          boxes.push(z);
+        }
+        if (world.setZones(boxes.map(z => ({ x0: (z.x0 - ox) / s, y0: (z.y0 - oy) / s, x1: (z.x1 - ox) / s, y1: (z.y1 - oy) / s })))) wake();
+      };
+      zoneIdle = requestIdleCallback(probe, { timeout: 1000 });
+    }
+    function settleZones() { clearTimeout(zoneTimer); if (zoneIdle) { cancelIdleCallback(zoneIdle); zoneIdle = 0; } zoneTimer = setTimeout(findZones, 1000); }
     ro = new ResizeObserver(stirUp);
     const scan = () => { scanTimer = 0; if (alive) for (const el of document.body.querySelectorAll(SELECTOR)) watch(el); };
     // New windows are noticed at most once a second, with no work per added node, so a chat switch or a streaming reply costs nothing here.
-    mo = new MutationObserver(() => { if (!scanTimer) scanTimer = setTimeout(scan, 1000); });
+    mo = new MutationObserver(() => { if (!scanTimer) scanTimer = setTimeout(scan, 1000); settleZones(); });
     mo.observe(document.body, { childList: true, subtree: true });
     scan();
-    addEventListener("scroll", () => { scrolledAt = performance.now(); }, on);
+    addEventListener("scroll", () => { scrolledAt = performance.now(); settleZones(); }, on);
     addEventListener("transitionrun", e => { if (e.target.matches && e.target.matches(SELECTOR)) { watch(e.target); stirUp(); } }, on);
     addEventListener("animationstart", e => { if (e.target.matches && e.target.matches(SELECTOR)) { watch(e.target); stirUp(); } }, on);
-    document.addEventListener("visibilitychange", stirUp, { signal: off.signal });
+    document.addEventListener("visibilitychange", () => { stirUp(); settleZones(); }, { signal: off.signal });
     addEventListener("pointermove", e => {
       const dt = Math.max(1, e.timeStamp - mt), dx = e.clientX - mx, dy = e.clientY - my, first = !mt; // only a moving mouse stirs, so a parked one lets them rest
       mx = e.clientX; my = e.clientY; mt = e.timeStamp;
@@ -159,7 +195,7 @@
       wake();
     }, on);
     addEventListener("resize", () => {
-      clearTimeout(resizeTimer); stirUp();
+      clearTimeout(resizeTimer); stirUp(); settleZones();
       if (canvas.isConnected && innerWidth && innerHeight) { fit(); draw(); } // the old sheet stretches for a moment while the window drags
       resizeTimer = setTimeout(reveal, 150);
     }, on);
@@ -171,6 +207,7 @@
       if (canvas.isConnected) return;
       html.appendChild(canvas);
       html.dataset.technozenInteractive = "on"; // the painted drops go in the same instant the live ones appear
+      settleZones();
     }
     reveal();
   }

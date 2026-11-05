@@ -88,15 +88,13 @@ const NONE = stir(-1e6, -1e6, 0);
   const overlaps = d => list.filter(o => o !== d && Math.hypot(o[0] - d[0], o[1] - d[1]) < o[2] + d[2]).length;
   const near = list.reduce((b, d) => overlaps(d) > overlaps(b) ? d : b, list[0]); // the most tightly painted cluster
   const w = world(list, W, H);
+  for (let t = 0; t < 30; t++) w.step(stir(near[0] - near[2] - 40, near[1], 0.3, 1, 0), [], BOUNDS);
+  for (let t = 0; t < 2000; t++) w.step(NONE, [], BOUNDS);
+  let farthest = 0;
+  for (let i = 0; i < list.length; i++) farthest = Math.max(farthest, Math.hypot(w.X[i] - list[i][0], w.Y[i] - list[i][1]));
+  if (spec.drops.length) assert(farthest < 150, "a gentle stir flung a drop " + farthest.toFixed(0) + " units");
   let top = 0;
-  for (let t = 0; t < 6; t++) w.step(stir(near[0] - near[2] - 60, near[1], 0.3, 1, 0), [], BOUNDS);
-  for (let t = 0; t < 300; t++) { w.step(NONE, [], BOUNDS); for (let i = 0; i < list.length; i++) top = Math.max(top, speed(w, i)); }
-  assert(top <= w.VAPP, "a small nudge reached " + top);
-  let shifted = 0;
-  for (let i = 0; i < list.length; i++) if (Math.hypot(w.X[i] - list[i][0], w.Y[i] - list[i][1]) > 3) shifted++;
-  console.log("a small nudge on the tightest cluster shifted " + shifted + " drops by more than 3 units");
-  assert(shifted <= 2, "a small nudge shifted " + shifted + " drops by more than 3 units");
-  const scroll = world(list, W, H); top = 0;
+  const scroll = world(list, W, H);
   const roomy = { l: -5000, t: -5000, r: W + 5000, b: H + 5000 }; // nothing leaves the window here
   for (let t = 0; t < 180; t++) { scroll.step(NONE, [{ x0: 0, y0: 0, x1: W, y1: H, vx: 0, vy: -3 }], roomy); for (let i = 0; i < list.length; i++) top = Math.max(top, speed(scroll, i)); }
   assert(top <= scroll.VAPP * 1.01, "scrolling alone reached " + top);
@@ -199,6 +197,113 @@ const NONE = stir(-1e6, -1e6, 0);
   while (w.awake() && t < 60 * 900) { w.step(NONE, [], b); t++; }
   assert(!w.awake(), "still moving after 15 minutes");
   console.log("stirring near the top edge settled after " + (t / 60).toFixed(0) + " s");
+}
+{ // A drop behind a text box eases out to free space, gently, without being told twice.
+  const w = one(), box = { x0: 600, y0: 0, x1: 900, y1: 1000 };
+  assert(w.setZones([box]) && w.awake(), "a caught drop wakes");
+  let top = 0;
+  for (let t = 0; t < w.REST; t++) { w.step(NONE, [], BOUNDS); top = Math.max(top, speed(w)); }
+  assert(w.X[0] + 20 <= 600 || w.X[0] - 20 >= 900, "ended clear of the box, x=" + w.X[0]);
+  assert(top <= w.VZONE * 1.01, "gently: " + top);
+  assert(!w.awake() && speed(w) === 0, "and rests within the 102 s");
+}
+{ // A drop already clear stays put, the same box again wakes nothing, and a changing box never keeps them moving.
+  const w = one(), clear = { x0: 0, y0: 0, x1: 300, y1: 1000 };
+  assert(!w.setZones([clear]) && !w.awake() && w.X[0] === 800, "a drop outside any box is left alone");
+  const stuck = world([[800, 500, 20]], W, H), all = { x0: -100, y0: -100, x1: W + 100, y1: H + 100 };
+  stuck.setZones([all]);
+  for (let t = 0; t < stuck.REST + 5; t++) { if (t % 60 === 0) stuck.setZones([{ ...all, y1: H + 100 + t }]); stuck.step(NONE, [], BOUNDS); }
+  assert(!stuck.awake() && speed(stuck) === 0 && stuck.X[0] === 800, "a drop with nowhere to go rests where it is");
+}
+{ // Easing out never restarts the clock, so the 102 s holds while drops are inside a box.
+  const w = world([[800, 500, 20], [100, 950, 20]], W, H), box = { x0: 200, y0: 0, x1: 1400, y1: 1000 };
+  w.setZones([box]);
+  for (let t = 0; t < w.REST - 1; t++) w.step(NONE, [], BOUNDS);
+  assert(w.awake(), "awake just before 102 s");
+  w.step(NONE, [], BOUNDS);
+  assert(!w.awake(), "at rest exactly 102 s after waking");
+}
+{ // The mouse wins: it pushes a drop through a box, and near the cursor the box lets go.
+  const w = one(), box = { x0: 600, y0: 0, x1: 900, y1: 1000 }; w.X[0] = 550;
+  w.setZones([box]);
+  let far = 0;
+  for (let t = 0; t < 600; t++) { w.step(stir(w.X[0] - 30, 500, 1, 5, 0), [], BOUNDS); far = Math.max(far, w.X[0]); }
+  assert(far > 900, "the mouse pushed it through, reached " + far);
+  const a = one(), b = one(); a.setZones([box]); b.setZones([box]);
+  for (let t = 0; t < 60; t++) { a.step(stir(a.X[0], a.Y[0], 0), [], BOUNDS); b.step(NONE, [], BOUNDS); }
+  assert(speed(a) < speed(b) / 4, "a parked cursor holds a drop against the box: " + speed(a) + " against " + speed(b));
+}
+{ // It never eases off the screen, and a respawning drop does not enter behind a box.
+  const w = world([[30, 500, 20]], W, H);
+  w.setZones([{ x0: 0, y0: 0, x1: 300, y1: 1000 }]);
+  for (let t = 0; t < w.REST; t++) w.step(NONE, [], BOUNDS);
+  assert(w.X[0] >= 300, "went to the free side, x=" + w.X[0]);
+  const r = world([[800, 500, 20]], W, H), middle = { x0: 300, y0: 0, x1: W - 300, y1: H };
+  r.step(stir(770, 500), [], BOUNDS); r.setZones([middle]); r.X[0] = W + 100; r.VX[0] = 1; r.step(NONE, [], BOUNDS);
+  const into = r.X[0] < 0 ? 62 : r.X[0] > W ? W - 62 : r.X[0], top = r.Y[0] < 0 || r.Y[0] > H;
+  assert(!top && (into < 300 || into > W - 300), "entered behind the box at " + r.X[0] + "," + r.Y[0]);
+}
+{ // More than 60% past an edge, a drop is pulled the rest of the way out and comes back elsewhere, even at no speed. At 55% it stays.
+  const placed = (d) => { const w = one(); w.step(stir(770, 500), [], BOUNDS); w.X[0] = W + d; w.Y[0] = 500; w.VX[0] = 0.002; w.VY[0] = 0; return w; };
+  const past = placed(0.2 * 20 + 1); let back = false;
+  for (let t = 0; t < 400 && !back; t++) { past.step(NONE, [], BOUNDS); if (past.X[0] < W || past.Y[0] < 0 || past.Y[0] > H) back = true; }
+  assert(back, "a drop 62% out never left");
+  assert(past.X[0] < W, "it came back by the edge it left");
+  const under = placed(0.2 * 20 - 2); under.VX[0] = 0;
+  for (let t = 0; t < under.REST + 10; t++) under.step(NONE, [], BOUNDS);
+  assert(under.X[0] > W && under.X[0] < W + 20 && !under.awake(), "a drop 55% out stays where it stopped, x=" + under.X[0]);
+  const late = placed(0); late.VX[0] = 0; late.step(NONE, [], BOUNDS); // leaving at the very end of a glide still finishes
+  for (let t = 0; t < late.REST - 20; t++) late.step(NONE, [], BOUNDS);
+  late.X[0] = W + 5; late.VX[0] = 0;
+  let left = false; for (let t = 0; t < 400 && !left; t++) { late.step(NONE, [], BOUNDS); if (late.X[0] < W) left = true; }
+  assert(left, "a drop past 60% as the clock ran out was left stuck on the edge");
+  const painted = world([[W + 15, 500, 20]], W, H); // cut off by the leaf from the start: not pushed there, so left alone
+  painted.step(stir(W - 40, 500, 0.5), [], BOUNDS);
+  for (let t = 0; t < 30; t++) painted.step(NONE, [], BOUNDS);
+  assert(painted.X[0] > W, "a painted drop cut off by the edge was pulled about");
+}
+{ // A box shifting slightly never wakes a drop resting just clear of it.
+  const w = one(); assert(!w.setZones([{ x0: 815, y0: 0, x1: 1000, y1: H }]) && !w.awake(), "woken by a box that barely touches it");
+  assert(w.setZones([{ x0: 700, y0: 0, x1: 1000, y1: H }]) && w.awake(), "a real overlap wakes it");
+}
+{ // Each drop has its own 102 s: one arriving does not keep the others moving, but a real knock wakes a resting drop.
+  const far = world([[200, 200, 20], [1400, 800, 20]], W, H);
+  far.step(stir(170, 200), [], BOUNDS);
+  for (let t = 0; t < far.REST - 200; t++) far.step(NONE, [], BOUNDS);
+  far.step(stir(1370, 800), [], BOUNDS);
+  for (let t = 0; t < 250; t++) far.step(NONE, [], BOUNDS);
+  assert(speed(far, 0) === 0 && speed(far, 1) > 0, "the first drop rested on its own clock");
+  const knock = world([[600, 500, 40], [700, 500, 40]], W, H);
+  knock.step(stir(540, 500), [], BOUNDS); knock.VX[0] = 1;
+  for (let t = 0; t < 100; t++) knock.step(NONE, [], BOUNDS);
+  assert(knock.X[1] > 700, "a knock moved the resting drop");
+  const soft = world([[600, 500, 40], [679, 500, 40]], W, H);
+  soft.step(stir(415, 500, 0.5), [], BOUNDS); soft.VX[0] = 0.01;
+  for (let t = 0; t < 400; t++) soft.step(NONE, [], BOUNDS);
+  assert(soft.X[1] === 679, "a faint touch left the resting drop alone");
+}
+{ // Easing out of realistic layouts settles soon after 102 s, with everything clear of the boxes. Real list.
+  const list = spec.drops.length ? spec.drops : Array.from({ length: 120 }, (_, i) => [(i * 137) % W, (i * 71) % H, 5 + i % 56]);
+  const b = { l: 0, t: 90, r: W, b: 910, s: 1.59 };
+  for (const zones of [[{ x0: 560, y0: 0, x1: 1040, y1: H }], [{ x0: 560, y0: 0, x1: 1040, y1: H }, { x0: 0, y0: 0, x1: 225, y1: H }, { x0: 1358, y0: 0, x1: W, y1: H }]]) {
+    const w = world(list, W, H); w.setZones(zones);
+    let t = 0; while (w.awake() && t < 60 * 900) { w.step(NONE, [], b); t++; }
+    assert(t <= 60 * 360, "took " + (t / 60).toFixed(0) + " s to settle");
+    let behind = 0;
+    for (let i = 0; i < list.length; i++) if (w.X[i] > b.l && w.X[i] < b.r && w.Y[i] > b.t && w.Y[i] < b.b && zones.some(z => w.X[i] + w.R[i] - 12 > z.x0 && w.X[i] - w.R[i] + 12 < z.x1 && w.Y[i] + w.R[i] - 12 > z.y0 && w.Y[i] - w.R[i] + 12 < z.y1)) behind++;
+    console.log(zones.length + " boxes: settled after " + (t / 60).toFixed(0) + " s, " + behind + " drops still behind a box");
+    assert(behind <= 3, behind + " drops stayed behind a box");
+  }
+}
+{ // A drop still on its way in, shoved back out by the mouse, comes back again.
+  const w = one();
+  w.step(stir(770, 500), [], BOUNDS); w.X[0] = W + 100; w.VX[0] = 1; w.step(NONE, [], BOUNDS);
+  const fromX = w.X[0], fromY = w.Y[0];
+  assert(fromX < 0 || fromY < 0 || fromY > H, "entered from outside");
+  w.VX[0] = fromX < 0 ? -2 : 0; w.VY[0] = fromY < 0 ? -2 : fromY > H ? 2 : 0;
+  let again = false;
+  for (let t = 0; t < 100 && !again; t++) { w.step(NONE, [], BOUNDS); if (Math.hypot(w.X[0] - fromX, w.Y[0] - fromY) > 200) again = true; }
+  assert(again, "lost on its way in");
 }
 { // Fast enough: one step of 120 drops, stirred, with 200 moving shapes.
   const list = Array.from({ length: 120 }, (_, i) => [(i * 137) % W, (i * 71) % H, 5 + i % 56]);

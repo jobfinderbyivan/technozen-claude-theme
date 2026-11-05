@@ -1,7 +1,7 @@
 // Physics for the Take skin's water drops, with no page access. Lengths are leaf-image units, speeds are units per 1/60 s step.
 // Speed limits are set for the leaf drawn at scale 1.6 (a 2560 wide window) and adjusted by bounds.s, so they hold on screen at any size.
 function technozenWorld(list, W, H) {
-  const REST = 102 * 60, VMAX = 1.2, VAPP = 0.35, MOUSE = 0.009, APP = 0.004, RANGE = 160, MARGIN = 30, CELL = 130, STILL = 1e-4, ENTER = 0.7;
+  const REST = 102 * 60, VMAX = 1.2, VAPP = 0.35, MOUSE = 0.009, APP = 0.004, RANGE = 160, MARGIN = 30, CELL = 130, STILL = 1e-4, ENTER = 0.7, VZONE = 0.25, ZONE = 0.003, DEEP = 12, LEAVE = 0.5;
   const DRAG = 0.02; // grows with speed, as in water: a hard push dies quickly into a long, faint glide
   const n = list.length, X = new Float64Array(n), Y = new Float64Array(n), VX = new Float64Array(n), VY = new Float64Array(n), R = new Float64Array(n), LIGHT = new Float64Array(n), inside = new Uint8Array(n);
   list.forEach((d, i) => { X[i] = d[0]; Y[i] = d[1]; R[i] = d[2]; LIGHT[i] = Math.min(4, Math.pow(50 / d[2], 1.5)); }); // big drops lean away slowly
@@ -11,7 +11,24 @@ function technozenWorld(list, W, H) {
     const o = R[i] + R[j] - Math.hypot(X[i] - X[j], Y[i] - Y[j]);
     if (o > 0) painted.set(i * n + j, o);
   }
-  let idle = REST, seed = 12345;
+  const clock = new Int32Array(n).fill(REST); // steps since each drop's own last push: one drop arriving must not keep the rest moving
+  let seed = 12345, zones = [];
+  const within = new Uint8Array(n);
+  const inZone = (i, z) => X[i] + R[i] > z.x0 && X[i] - R[i] < z.x1 && Y[i] + R[i] > z.y0 && Y[i] - R[i] < z.y1;
+
+  // Text boxes and panels drops should ease out of, {x0, y0, x1, y1}. Only a drop newly caught inside one starts the 102 s,
+  // so a box that keeps changing, or a drop with nowhere to go, can never keep them moving. Returns whether they woke.
+  function setZones(next) {
+    zones = next;
+    let woke = false;
+    for (let i = 0; i < n; i++) {
+      // A real overlap, so a box shifting a little does not wake a drop resting just clear of it.
+      const caught = zones.some(z => X[i] + R[i] - DEEP > z.x0 && X[i] - R[i] + DEEP < z.x1 && Y[i] + R[i] - DEEP > z.y0 && Y[i] - R[i] + DEEP < z.y1);
+      if (caught && !within[i]) { woke = true; clock[i] = 0; }
+      within[i] = caught ? 1 : 0;
+    }
+    return woke;
+  }
   const random = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
 
   // A drop pushed fully off the window is gone. It comes back from a different edge, where there is the most free room,
@@ -27,6 +44,7 @@ function technozenWorld(list, W, H) {
         const y = e === 2 ? bounds.t + into : e === 3 ? bounds.b - into : bounds.t + a * (bounds.b - bounds.t);
         let room = Infinity;
         for (let j = 0; j < n; j++) if (j !== i) room = Math.min(room, Math.hypot(X[j] - x, Y[j] - y) - R[j] - R[i]);
+        for (const z of zones) if (x > z.x0 && x < z.x1 && y > z.y0 && y < z.y1) room -= 1e4; // not into a text box
         if (room > best) { best = room; edge = e; along = a; }
       }
     }
@@ -37,7 +55,7 @@ function technozenWorld(list, W, H) {
     VY[i] = edge === 2 ? speed : edge === 3 ? -speed : drift;
     inside[i] = 2; // on its way in
     for (const key of painted.keys()) if (Math.floor(key / n) === i || key % n === i) painted.delete(key);
-    idle = 0;
+    clock[i] = 0;
   }
 
   function contacts(vapp) {
@@ -46,7 +64,11 @@ function technozenWorld(list, W, H) {
       const c = Math.max(0, Math.min(cols - 1, Math.floor((X[i] + 600) / CELL))) + Math.max(0, Math.min(rows - 1, Math.floor((Y[i] + 600) / CELL))) * cols;
       next[i] = head[c]; head[c] = i;
     }
-    const nudge = (i, ax, ay) => { // a touch never raises a drop past the app's gentle speed
+    const nudge = (i, ax, ay, other) => { // a touch never raises a drop past the app's gentle speed
+      if (clock[i] >= REST) { // a drop at rest only wakes to a real knock
+        if (Math.hypot(VX[other], VY[other]) < 0.05) return;
+        clock[i] = 0;
+      }
       const before = Math.hypot(VX[i], VY[i]);
       VX[i] += ax; VY[i] += ay;
       const limit = Math.max(before, vapp), now = Math.hypot(VX[i], VY[i]);
@@ -67,7 +89,7 @@ function technozenWorld(list, W, H) {
             if (base !== undefined) { if (overlap < base) painted.set(a * n + b, overlap); overlap -= base; }
             if (overlap <= 0) continue;
             const f = Math.min(0.01, 0.002 * overlap), ma = R[a] ** 3, mb = R[b] ** 3, sa = 2 * mb / (ma + mb), sb = 2 * ma / (ma + mb);
-            nudge(a, -dx / d * f * sa, -dy / d * f * sa); nudge(b, dx / d * f * sb, dy / d * f * sb);
+            nudge(a, -dx / d * f * sa, -dy / d * f * sa, b); nudge(b, dx / d * f * sb, dy / d * f * sb, a);
           }
     }
   }
@@ -77,7 +99,6 @@ function technozenWorld(list, W, H) {
   function step(mouse, shapes, bounds) {
     const k = 1.6 / (bounds.s || 1.6), vmax = VMAX * k, vapp = VAPP * k;
     const known = mouse && mouse.x > -1e5, stirring = known && mouse.power > 0.02;
-    let pushed = false;
     for (let i = 0; i < n; i++) {
       let near = 0; // how much the cursor claims this drop, moving or parked: the mouse has priority over the app
       if (known) {
@@ -87,7 +108,7 @@ function technozenWorld(list, W, H) {
           if (stirring) {
             const f = MOUSE * k * LIGHT[i] * mouse.power * near * near;
             VX[i] += dx / d * f + mouse.vx * f * 0.01; VY[i] += dy / d * f + mouse.vy * f * 0.01;
-            pushed = true;
+            clock[i] = -1;
           }
         }
       }
@@ -104,20 +125,51 @@ function technozenWorld(list, W, H) {
         VX[i] += bx * (1 - near); VY[i] += by * (1 - near);
         const over = Math.hypot(VX[i], VY[i]) / vapp;
         if (over > 1) { VX[i] /= over; VY[i] /= over; }
-        pushed = true;
+        clock[i] = -1;
       }
     }
     for (const s of shapes) { s.x0 += s.vx; s.x1 += s.vx; s.y0 += s.vy; s.y1 += s.vy; }
-    if (pushed) idle = 0;
-    else if (idle >= REST) return;
-    else idle++;
-    if (idle >= REST) { VX.fill(0); VY.fill(0); return; } // exactly at rest, 102 s after the last push
-    contacts(vapp);
-    const left = 1 - idle / REST, cap = vmax * left * left; // smooth to the end, no visible stop
+    let any = false;
     for (let i = 0; i < n; i++) {
+      if (clock[i] >= REST) continue;
+      if (++clock[i] >= REST) { VX[i] = 0; VY[i] = 0; } else any = true; // exactly at rest, 102 s after its last push
+    }
+    if (!any) return;
+    contacts(vapp);
+    // Ease out of any text box by its nearest side that stays on screen. No wall: the mouse can still push a drop back through.
+    if (zones.length) for (let i = 0; i < n; i++) {
+      if (clock[i] >= REST) continue;
+      for (const z of zones) {
+        if (!inZone(i, z)) continue;
+        const sides = [[z.x0 - R[i] - bounds.l, X[i] - z.x0 + R[i], -1, 0], [bounds.r - z.x1 - R[i], z.x1 - X[i] + R[i], 1, 0], [z.y0 - R[i] - bounds.t, Y[i] - z.y0 + R[i], 0, -1], [bounds.b - z.y1 - R[i], z.y1 - Y[i] + R[i], 0, 1]];
+        let way = null;
+        for (const side of sides) if (side[0] >= 0 && (!way || side[1] < way[1])) way = side;
+        if (!way) continue; // nowhere to go
+        let cursor = 0;
+        if (known) cursor = Math.max(0, 1 - Math.max(0, Math.hypot(X[i] - mouse.x, Y[i] - mouse.y) - R[i]) / RANGE);
+        const f = ZONE * k * LIGHT[i] * (1 - cursor);
+        VX[i] += way[2] * f; VY[i] += way[3] * f;
+        const over = Math.hypot(VX[i], VY[i]) / (VZONE * k);
+        if (over > 1 && !stirring) { VX[i] /= over; VY[i] /= over; }
+        break;
+      }
+    }
+    for (let i = 0; i < n; i++) {
+      if (clock[i] >= REST) continue;
+      const left = 1 - clock[i] / REST, cap = vmax * left * left; // smooth to the end, no visible stop
       let v = Math.hypot(VX[i], VY[i]);
       const slow = Math.min(1 - DRAG * v / k, v > cap ? cap / v : 1);
       VX[i] *= slow; VY[i] *= slow; v *= slow;
+      if (inside[i] === 1) { // more than 60% past the window's edge: it goes the rest of the way, whatever its speed, and comes back elsewhere
+        const dl = bounds.l - X[i], dr = X[i] - bounds.r, dt = bounds.t - Y[i], db = Y[i] - bounds.b, far = Math.max(dl, dr, dt, db);
+        if (far > 0.2 * R[i]) {
+          X[i] += far === dl ? -LEAVE * k : far === dr ? LEAVE * k : 0; Y[i] += far === dt ? -LEAVE * k : far === db ? LEAVE * k : 0;
+          clock[i] = Math.min(clock[i], REST - 300); // it finishes leaving before it rests
+          const edgeGap = R[i] * 1.5 + 2;
+          if (far > edgeGap) { respawn(i, far === dl ? 0 : far === dr ? 1 : far === dt ? 2 : 3, bounds, k); }
+          continue;
+        }
+      }
       if (v <= STILL) continue;
       X[i] += VX[i]; Y[i] += VY[i];
       if (X[i] > bounds.l && X[i] < bounds.r && Y[i] > bounds.t && Y[i] < bounds.b) inside[i] = 1;
@@ -128,6 +180,6 @@ function technozenWorld(list, W, H) {
     }
   }
 
-  return { X, Y, VX, VY, R, REST, VMAX, VAPP, step, awake: () => idle < REST };
+  return { X, Y, VX, VY, R, REST, VMAX, VAPP, VZONE, step, setZones, awake: () => clock.some(c => c < REST) };
 }
 if (typeof module !== "undefined") module.exports = technozenWorld;
