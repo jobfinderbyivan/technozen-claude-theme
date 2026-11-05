@@ -41,8 +41,8 @@ function technozenWorld(list, W, H) {
     respawn(i, -1, bounds, 1.6 / (bounds.s || 1.6));
   }
 
-  // The idle process. Once everything is at rest, 70% of the drops on view set off for somewhere else over 5 minutes, placed along a slow
-  // curve rather than pushed, peaking near 2 px/s, too slowly to see. Each tries many random spots and takes the roomiest: directions look random, the gaps fill.
+  // The idle process. Once everything is at rest, 70% of the drops on view set off in one direction each, in a straight line, over 5 minutes,
+  // placed rather than pushed, peaking near 2 px/s, too slowly to see. They all travel alike; only the direction differs, the roomiest of many random ones, so the gaps fill.
   function planDrift(bounds) {
     const k = bounds.s || 1.6, reach = DRIFT_REACH / k, inRect = (x, y, r, z) => x + r > z.x0 && x - r < z.x1 && y + r > z.y0 && y - r < z.y1;
     const shown = []; for (let i = 0; i < n; i++) if (R[i] > 0 && X[i] > bounds.l && X[i] < bounds.r && Y[i] > bounds.t && Y[i] < bounds.b) shown.push(i);
@@ -53,8 +53,8 @@ function technozenWorld(list, W, H) {
     drift = []; driftT = 0;
     for (const i of moving) {
       let best = -Infinity, bx = 0, by = 0;
-      for (let tries = 0; tries < 48; tries++) {
-        const a = random() * 6.283, d = reach * (0.2 + 0.8 * Math.sqrt(random())), x = X[i] + Math.cos(a) * d, y = Y[i] + Math.sin(a) * d;
+      for (let d = reach; best === -Infinity && d > reach / 8; d /= 2) for (let tries = 0; tries < 48; tries++) { // the full distance, unless a tight spot allows only less
+        const a = random() * 6.283, x = X[i] + Math.cos(a) * d, y = Y[i] + Math.sin(a) * d;
         if (x < bounds.l + R[i] || x > bounds.r - R[i] || y < bounds.t + R[i] || y > bounds.b - R[i]) continue;
         if (zones.some(z => inRect(x, y, R[i], z)) || covers.some(z => inRect(x, y, R[i], z))) continue; // open leaf only
         let room = Infinity;
@@ -64,7 +64,7 @@ function technozenWorld(list, W, H) {
       leaving[i] = 0;
       if (best === -Infinity) continue;
       toX[i] = bx; toY[i] = by;
-      drift.push({ i, x0: X[i], y0: Y[i], x1: bx, y1: by, bend: (random() - 0.5) * 0.3 });
+      drift.push({ i, x0: X[i], y0: Y[i], x1: bx, y1: by });
     }
     return drift.length;
   }
@@ -72,8 +72,7 @@ function technozenWorld(list, W, H) {
     driftT += steps;
     const u = Math.min(1, driftT / DRIFT), e = u * u * (3 - 2 * u);
     drift = drift.filter(d => clock[d.i] >= REST); // a drop the mouse or the app has touched goes back to ordinary physics
-    const arc = Math.sin(Math.PI * e); // a gentle curve, so no path looks planned
-    for (const d of drift) { X[d.i] = d.x0 + (d.x1 - d.x0) * e - (d.y1 - d.y0) * d.bend * arc; Y[d.i] = d.y0 + (d.y1 - d.y0) * e + (d.x1 - d.x0) * d.bend * arc; }
+    for (const d of drift) { X[d.i] = d.x0 + (d.x1 - d.x0) * e; Y[d.i] = d.y0 + (d.y1 - d.y0) * e; }
     if (u >= 1) drift = [];
     return drift.length > 0;
   }

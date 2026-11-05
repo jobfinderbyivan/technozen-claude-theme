@@ -356,14 +356,23 @@ const NONE = stir(-1e6, -1e6, 0);
   const spreadBefore = nearest(), x0 = Float64Array.from(w.X), y0 = Float64Array.from(w.Y);
   assert(w.planDrift(b) === 14, "70% of 20 is 14");
   let peak = 0, t = 0;
+  const path = [];
   while (t < w.DRIFT - 8) {
     const px = Float64Array.from(w.X), py = Float64Array.from(w.Y);
     assert(w.driftStep(7.5), "ended early at " + (t / 60).toFixed(0) + " s"); t += 7.5;
     for (let i = 0; i < 20; i++) peak = Math.max(peak, Math.hypot(w.X[i] - px[i], w.Y[i] - py[i]) / 7.5 * 60 * 1.6);
     assert(!w.awake(), "the idle process must not wake the physics");
+    path.push([Float64Array.from(w.X), Float64Array.from(w.Y)]);
   }
   assert(!w.driftStep(7.5), "finished at 5 minutes");
   assert(peak <= 2.4, "visible speed: " + peak.toFixed(2) + " px/s");
+  // One direction each: every point of a drop's path lies on the straight line, and all travel the same distance, so only the direction differs.
+  for (let i = 0; i < 20; i++) {
+    const dx = w.X[i] - x0[i], dy = w.Y[i] - y0[i], len = Math.hypot(dx, dy);
+    if (!len) continue;
+    assert(Math.abs(len - 380 / 1.6) < 0.01, "drop " + i + " travelled " + len.toFixed(1) + " instead of the same distance as the rest");
+    for (const [px, py] of path) assert(Math.abs((px[i] - x0[i]) * dy - (py[i] - y0[i]) * dx) / len < 0.01, "drop " + i + " left its straight line");
+  }
   const angles = new Set(); let went = 0;
   for (let i = 0; i < 20; i++) if (Math.hypot(w.X[i] - x0[i], w.Y[i] - y0[i]) > 1) { went++; angles.add(Math.floor((Math.atan2(w.Y[i] - y0[i], w.X[i] - x0[i]) + Math.PI) / (Math.PI / 4))); }
   assert(went === 14, went + " drops moved");
