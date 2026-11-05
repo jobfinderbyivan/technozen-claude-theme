@@ -156,7 +156,8 @@ def skin_css(slug):
     out = f'html[data-technozen="{slug}"][data-technozen-skin="on"] {{\n{minify(text)}\n}}\n' + "\n".join(minify(f) for f in frames)
     if "__LEAF__" in out:  # after minifying: the image's quoted text must not be touched
         import leaf
-        out = out.replace("__LEAF__", "data:image/svg+xml," + urllib.parse.quote(leaf.svg().replace('"', "'").replace("\n", ""), safe="/:=.,;' -_()<>"))
+        uri = lambda count: "data:image/svg+xml," + urllib.parse.quote(leaf.svg(count=count).replace('"', "'").replace("\n", ""), safe="/:=.,;' -_()<>")
+        out = out.replace("__LEAF__", uri(120)).replace("__LEAF_BARE__", uri(0))
     return out
 
 
@@ -164,8 +165,12 @@ def snippet():
     themes = {slug: {"name": t["name"], "mode": t["mode"], "accent": t["accent"], "bg": t["bg"]} for slug, t in THEMES.items()}
     sheets = {slug: minify(color_css(slug)) + "\n" + skin_css(slug) for slug in THEMES}  # only the active theme's sheet is ever in the page
     template = (ROOT / "snippet.template.js").read_text(encoding="utf-8")
+    import leaf
+    spec = {"w": leaf.W, "h": leaf.H, "defs": leaf.DROP_DEFS, "drops": leaf.drops()}
+    physics = (ROOT / "drops.js").read_text(encoding="utf-8").split('if (typeof module')[0]
     # json.dumps makes the CSS plain quoted strings, so no backtick or ${} escaping to get wrong.
-    return template.replace("__THEMES__", json.dumps(themes)).replace("__CSS__", json.dumps(sheets))
+    return (template.replace("__THEMES__", json.dumps(themes)).replace("__CSS__", json.dumps(sheets))
+            .replace("__DROPS__", json.dumps(spec, separators=(",", ":"))).replace("// __PHYSICS__", physics))
 
 
 def userscript():

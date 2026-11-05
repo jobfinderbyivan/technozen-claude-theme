@@ -78,7 +78,7 @@ def test_distinct():
 def test_css():
     text = (DIST / "technozen.css").read_text(encoding="utf-8")
     check(text.count("{") == text.count("}"), "css: unbalanced braces")
-    check("__LEAF__" not in text and "url(http" not in text, "css: placeholder left in or external URL used")
+    check("__LEAF" not in text and "url(http" not in text, "css: placeholder left in or external URL used")
     for slug in THEMES:
         skin = build.ROOT / "skins" / f"{slug}.css"
         check(skin.exists(), f"skins/{slug}.css is missing")
@@ -136,6 +136,19 @@ def test_js():
     check("@match        https://claude.ai/*" in (DIST / "technozen.user.js").read_text(encoding="utf-8"), "user.js: missing @match")
 
 
+def test_drops():
+    import leaf
+    check(leaf.svg().count("<use ") == 120 and leaf.svg(count=0).count("<use ") == 0, "leaf: bare version must have no drops, normal one 120")
+    if not shutil.which("node"):
+        return print("node not found, skipped the drops physics")
+    spec = build.ROOT / "dist" / "drops.spec.tmp"
+    spec.write_text(json.dumps({"drops": leaf.drops()}), encoding="utf-8")
+    r = subprocess.run(["node", str(build.ROOT / "drops.test.js"), str(spec)], capture_output=True, text=True)
+    spec.unlink()
+    print(r.stdout.strip())
+    check(r.returncode == 0, "drops physics:\n" + r.stderr)
+
+
 def test_cli_themes():
     on_disk = {p.stem for p in (DIST / "cli-themes").glob("*.json")}
     check(on_disk == set(THEMES), f"cli-themes/ has {sorted(on_disk)} but themes.json has {sorted(THEMES)}")
@@ -166,7 +179,7 @@ def test_idempotent():
 
 if __name__ == "__main__":
     # test_palette runs before the build so a bad themes.json gets a message, not a traceback
-    for test in (test_palette, build.build, test_contrast, test_distinct, test_css, test_js, test_cli_themes, test_round_trip, test_idempotent):
+    for test in (test_palette, build.build, test_contrast, test_distinct, test_css, test_js, test_drops, test_cli_themes, test_round_trip, test_idempotent):
         test()
         if failures:
             print(f"\nFAIL in {test.__name__}:")

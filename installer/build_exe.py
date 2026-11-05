@@ -6,7 +6,7 @@ import pathlib
 import subprocess
 import sys
 
-VERSION = "1.4.4"   # shown in the installer's title bar and used for the release file name
+VERSION = "1.5.0"   # shown in the installer's title bar and used for the release file name
 HERE = pathlib.Path(__file__).parent
 SNIPPET = HERE.parent / "dist" / "technozen.snippet.js"
 CSC = pathlib.Path(r"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe")

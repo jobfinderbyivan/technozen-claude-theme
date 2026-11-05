@@ -38,6 +38,9 @@
 & {
   background: #7fd130 url("__LEAF__") center / cover fixed !important;
 }
+&[data-technozen-interactive="on"] {
+  background-image: url("__LEAF_BARE__") !important;
+}
 .bg-surface-1, .bg-surface-2, .dframe-root, .dframe-content, .dframe-pane {
   background-color: transparent !important;
 }
