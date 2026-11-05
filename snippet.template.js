@@ -42,7 +42,7 @@
   function startDrops() { if (!window.technozenDropsStop) runDrops().catch(e => { console.warn("[technozen] drops stay painted on the leaf:", e); stopDrops(); }); }
 
   async function runDrops() {
-    let alive = true, raf = 0, timer = 0, resizeTimer = 0, last = 0, spare = 0, activeUntil = 0, lastSample = 0;
+    let alive = true, raf = 0, timer = 0, resizeTimer = 0, scanTimer = 0, last = 0, spare = 0, activeUntil = 0, lastSample = 0, scrolledAt = -1e9;
     const off = new AbortController(), on = { passive: true, capture: true, signal: off.signal };
     const canvas = Object.assign(document.createElement("canvas"), { id: "technozen-drops" });
     canvas.style.cssText = "position:fixed;inset:0;width:100%;height:100%;z-index:-1;pointer-events:none";
@@ -53,7 +53,7 @@
     const bounds = { l: 0, t: 0, r: 0, b: 0, s: 1 }, drawnX = new Float64Array(DROPS.drops.length), drawnY = new Float64Array(DROPS.drops.length);
     let io, mo, ro;
     window.technozenDropsStop = () => {
-      alive = false; off.abort(); cancelAnimationFrame(raf); clearTimeout(timer); clearTimeout(resizeTimer);
+      alive = false; off.abort(); cancelAnimationFrame(raf); clearTimeout(timer); clearTimeout(resizeTimer); clearTimeout(scanTimer);
       if (io) io.disconnect(); if (mo) mo.disconnect(); if (ro) ro.disconnect();
       canvas.remove(); delete html.dataset.technozenInteractive; window.technozenDropsStop = null;
     };
@@ -107,10 +107,10 @@
     }
     function wake() { if (alive && !raf) { last = performance.now(); raf = requestAnimationFrame(frame); } }
 
-    // The app, measured in batches away from the frame loop, and only while something is changing. Only what is on screen counts.
-    const SELECTOR = "p,li,pre,h1,h2,h3,h4,hr,td,button,nav,aside,[data-cds],.dframe-sidebar,[role=separator]";
-    const onScreen = new Set(), rects = new WeakMap(), arrived = new WeakSet();
-    const watch = el => { if (!panel.contains(el)) io.observe(el); };
+    // Only the windows the text sits in push, and only when they themselves move or resize: never the text, never scrolling.
+    const SELECTOR = "main,nav,aside,.dframe-sidebar,.dframe-content,.dframe-pane,.dframe-card,[data-cds=Panel],[data-cds=Dialog],[role=dialog],[data-cds-popup],[data-cds=Menu],[data-cds=Popover],[data-cds=ChatComposer]";
+    const onScreen = new Set(), rects = new WeakMap();
+    const watch = el => { if (!panel.contains(el)) { io.observe(el); ro.observe(el); } };
     io = new IntersectionObserver(entries => {
       for (const e of entries) {
         if (e.isIntersecting) onScreen.add(e.target);
@@ -123,15 +123,14 @@
     function sample() {
       timer = 0;
       const now = performance.now(), gap = now - lastSample, dt = Math.min(0.3, Math.max(0.05, gap / 1000)); lastSample = now;
-      const stale = gap > 500; // after a pause the old positions say nothing about speed
+      const stale = gap > 500 || now - scrolledAt < 250; // after a pause the old positions say nothing about speed, and a scroll moves only content
       const moving = [], toWorld = 1 / (s * dt * 60), clip = v => Math.max(-3, Math.min(3, v));
       for (const el of onScreen) {
         if (!el.isConnected) { onScreen.delete(el); continue; }
         const r = el.getBoundingClientRect(), p = rects.get(el);
         rects.set(el, [r.left, r.top, r.right, r.bottom]);
         let dx = 0, dy = 0;
-        if (arrived.has(el)) { arrived.delete(el); dy = r.height / 2; } // new text pushes downward as it opens
-        else if (p && !stale) { dx = (r.left - p[0] + r.right - p[2]) / 2; dy = (r.top - p[1] + r.bottom - p[3]) / 2; }
+        if (p && !stale) { dx = (r.left - p[0] + r.right - p[2]) / 2; dy = (r.top - p[1] + r.bottom - p[3]) / 2; }
         if (Math.abs(dx) + Math.abs(dy) < 0.5 || moving.length >= 300) continue;
         if (el.getAnimations().some(a => a.effect && a.effect.getTiming().iterations === Infinity)) continue; // a spinner is not a push
         moving.push({ x0: (r.left - ox) / s, y0: (r.top - oy) / s, x1: (r.right - ox) / s, y1: (r.bottom - oy) / s, vx: clip(dx * toWorld), vy: clip(dy * toWorld) });
@@ -140,20 +139,15 @@
       if (moving.length) wake();
       if (now < activeUntil) schedule(); else shapes = [];
     }
-    for (const el of document.body.querySelectorAll(SELECTOR)) watch(el); // what is already on screen is the starting point, and pushes nothing
-    mo = new MutationObserver(records => {
-      for (const record of records) for (const node of record.addedNodes) {
-        if (node.nodeType !== 1 || panel.contains(node)) continue;
-        if (node.matches(SELECTOR)) { arrived.add(node); watch(node); }
-        for (const el of node.querySelectorAll(SELECTOR)) { arrived.add(el); watch(el); }
-      }
-      stirUp();
-    });
-    mo.observe(document.body, { childList: true, subtree: true, characterData: true });
-    ro = new ResizeObserver(stirUp); // panels that open by changing size or class add no nodes
-    for (const el of document.body.querySelectorAll("main,nav,aside,.dframe-sidebar,[data-cds=Panel]")) ro.observe(el);
-    addEventListener("scroll", stirUp, on);
-    addEventListener("transitionrun", stirUp, on);
+    ro = new ResizeObserver(stirUp);
+    const scan = () => { scanTimer = 0; if (alive) for (const el of document.body.querySelectorAll(SELECTOR)) watch(el); };
+    // New windows are noticed at most once a second, with no work per added node, so a chat switch or a streaming reply costs nothing here.
+    mo = new MutationObserver(() => { if (!scanTimer) scanTimer = setTimeout(scan, 1000); });
+    mo.observe(document.body, { childList: true, subtree: true });
+    scan();
+    addEventListener("scroll", () => { scrolledAt = performance.now(); }, on);
+    addEventListener("transitionrun", e => { if (e.target.matches && e.target.matches(SELECTOR)) { watch(e.target); stirUp(); } }, on);
+    addEventListener("animationstart", e => { if (e.target.matches && e.target.matches(SELECTOR)) { watch(e.target); stirUp(); } }, on);
     document.addEventListener("visibilitychange", stirUp, { signal: off.signal });
     addEventListener("pointermove", e => {
       const dt = Math.max(1, e.timeStamp - mt), dx = e.clientX - mx, dy = e.clientY - my, first = !mt; // only a moving mouse stirs, so a parked one lets them rest

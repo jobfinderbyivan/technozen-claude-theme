@@ -97,7 +97,8 @@ const NONE = stir(-1e6, -1e6, 0);
   console.log("a small nudge on the tightest cluster shifted " + shifted + " drops by more than 3 units");
   assert(shifted <= 2, "a small nudge shifted " + shifted + " drops by more than 3 units");
   const scroll = world(list, W, H); top = 0;
-  for (let t = 0; t < 180; t++) { scroll.step(NONE, [{ x0: 0, y0: 0, x1: W, y1: H, vx: 0, vy: -3 }], BOUNDS); for (let i = 0; i < list.length; i++) top = Math.max(top, speed(scroll, i)); }
+  const roomy = { l: -5000, t: -5000, r: W + 5000, b: H + 5000 }; // nothing leaves the window here
+  for (let t = 0; t < 180; t++) { scroll.step(NONE, [{ x0: 0, y0: 0, x1: W, y1: H, vx: 0, vy: -3 }], roomy); for (let i = 0; i < list.length; i++) top = Math.max(top, speed(scroll, i)); }
   assert(top <= scroll.VAPP * 1.01, "scrolling alone reached " + top);
 }
 { // A heavy drop running into a tiny one nudges it gently: a touch never flings.
@@ -118,20 +119,60 @@ const NONE = stir(-1e6, -1e6, 0);
   for (let t = 0; t < 5; t++) { mouseOnly.step(stir(mouseOnly.X[0] - 1, 500), [], BOUNDS); both.step(stir(both.X[0] - 1, 500), [{ x0: 700, y0: 400, x1: 900, y1: 600, vx: 0, vy: -3 }], BOUNDS); }
   assert(Math.abs(both.Y[0] - mouseOnly.Y[0]) < 1e-9, "the app moved a drop the cursor had: " + both.Y[0]);
 }
-{ // The window holds a drop softly on every side: it may end partly cut off, never gone.
-  for (const [x, y, vx, vy] of [[3, 500, -1.2, 0], [1597, 500, 1.2, 0], [800, 3, 0, -1.2], [800, 997, 0, 1.2]]) {
+{ // A drop pushed off an edge disappears, and comes back from a different edge, sliding fully into view.
+  for (const [x, y, vx, vy, exit] of [[3, 500, -1.2, 0, "l"], [1597, 500, 1.2, 0, "r"], [800, 3, 0, -1.2, "t"], [800, 997, 0, 1.2, "b"]]) {
     const w = one(); w.X[0] = x; w.Y[0] = y;
-    w.step(stir(x, y, 0.03), [], BOUNDS); w.VX[0] = vx; w.VY[0] = vy;
+    w.step(stir(x, y, 0.03), [], BOUNDS); w.VX[0] = vx * 2; w.VY[0] = vy * 2;
+    let came = null;
+    for (let t = 0; t < 400 && !came; t++) {
+      const was = [w.X[0], w.Y[0]];
+      w.step(NONE, [], BOUNDS);
+      if (Math.hypot(w.X[0] - was[0], w.Y[0] - was[1]) > 50) { came = w.X[0] < 0 ? "l" : w.X[0] > W ? "r" : w.Y[0] < 0 ? "t" : "b"; break; }
+      if (t < 60) { w.VX[0] = vx * 2; w.VY[0] = vy * 2; } // keep it heading out
+    }
+    assert(came, "never came back after leaving by " + exit);
+    assert(came !== exit, "came back from the edge it left by: " + exit);
+    for (let t = 0; t < 2000; t++) w.step(NONE, [], BOUNDS);
+    assert(w.X[0] > 0 && w.X[0] < W && w.Y[0] > 0 && w.Y[0] < H, "did not slide into view: " + w.X[0] + "," + w.Y[0]);
     for (let t = 0; t < w.REST; t++) w.step(NONE, [], BOUNDS);
-    assert(w.X[0] > -30 && w.X[0] < W + 30 && w.Y[0] > -30 && w.Y[0] < H + 30, "lost past the edge: " + w.X[0] + "," + w.Y[0]);
+    assert(speed(w) === 0 && !w.awake(), "comes to rest like any other push");
   }
+}
+{ // It enters where there is free room: left and top are crowded, it left by the bottom, so it must come from the right.
+  const crowd = []; for (let y = 25; y < H; y += 50) crowd.push([40, y, 25]);
+  for (let x = 25; x < W - 200; x += 50) crowd.push([x, 40, 25]);
+  const w = world([[800, 500, 20], ...crowd], W, H);
+  w.step(stir(770, 500), [], BOUNDS); w.X[0] = 800; w.Y[0] = H + 100; w.VX[0] = 0; w.VY[0] = 1;
+  w.step(NONE, [], BOUNDS);
+  assert(w.X[0] > W, "entered at " + w.X[0] + "," + w.Y[0]);
+  assert(w.VX[0] < -0.3, "sliding in, " + w.VX[0]);
+}
+{ // Entering is a push like any other: the 102 s start again, even at the very end of a glide.
+  const w = one();
+  w.step(stir(770, 500), [], BOUNDS);
+  for (let t = 0; t < w.REST - 100; t++) w.step(NONE, [], BOUNDS);
+  w.X[0] = W + 100; w.VX[0] = 0.01; w.step(NONE, [], BOUNDS);
+  for (let t = 0; t < 300; t++) w.step(NONE, [], BOUNDS);
+  assert(w.awake() && speed(w) > 0.05, "still gliding in: " + speed(w));
+}
+{ // Every other edge gets used over time, and no drop is ever lost.
+  const w = one(), edges = new Set();
+  for (let round = 0; round < 40; round++) {
+    w.step(stir(w.X[0] - 30, w.Y[0]), [], BOUNDS);
+    w.X[0] = W + 100; w.VX[0] = 1; w.step(NONE, [], BOUNDS);
+    edges.add(w.X[0] < 0 ? "l" : w.Y[0] < 0 ? "t" : w.Y[0] > H ? "b" : "?");
+    assert(!edges.has("r"), "came back by the edge it left");
+    w.X[0] = 800; w.Y[0] = 500; w.VX[0] = 0; w.VY[0] = 0;
+  }
+  assert(edges.size >= 1 && !edges.has("?"), "entered from " + [...edges]);
 }
 { // Borders are permeable: a drop driven by the mouse passes through a shape, still or moving.
   for (const vx of [0, 0.5]) {
     const w = one(); let px = 500; w.X[0] = 560; w.Y[0] = 500;
     const panel = () => ({ x0: 600, y0: 0, x1: 700, y1: 1000, vx, vy: 0 });
-    for (let t = 0; t < 1200; t++) { px = w.X[0] - 30; w.step(stir(px, w.Y[0], 1, 5, 0), [panel()], BOUNDS); }
-    assert(w.X[0] > 700, "came out the far side, x=" + w.X[0]);
+    let far = 0;
+    for (let t = 0; t < 1200; t++) { px = w.X[0] - 30; w.step(stir(px, w.Y[0], 1, 5, 0), [panel()], BOUNDS); far = Math.max(far, w.X[0]); }
+    assert(far > 700, "came out the far side, reached x=" + far);
   }
 }
 { // Gentle at any stirring, never lost, never faster than the cap, numbers stay real. Uses the real 120 drops when given.
@@ -146,9 +187,18 @@ const NONE = stir(-1e6, -1e6, 0);
       assert(w.X[i] > -200 && w.X[i] < W + 200 && w.Y[i] > -200 && w.Y[i] < H + 200, "not lost: " + w.X[i] + "," + w.Y[i]);
     }
   }
-  for (let t = 0; t < w.REST; t++) w.step(NONE, [], BOUNDS);
+  for (let t = 0; w.awake() && t < 60 * 900; t++) w.step(NONE, [], BOUNDS); // a drop leaving late restarts the 102 s
   assert(!w.awake(), "all 120 settle");
   for (let i = 0; i < list.length; i++) assert(speed(w, i) === 0, "all exactly stopped");
+}
+{ // A respawn is a push, so chains can happen, but stirring next to an edge always settles.
+  const list = spec.drops.length ? spec.drops : Array.from({ length: 120 }, (_, i) => [(i * 137) % W, (i * 71) % H, 5 + i % 56]);
+  const b = { l: 0, t: 90, r: W, b: 910, s: 1.59 }, w = world(list, W, H);
+  for (let i = 0; i <= 180; i++) { const x = (900 + i * 5) / 1.59, y = 56 + (300 + Math.sin(i / 8) * 150) / 1.59; w.step(stir(x, y, 1, 3, 1), [], b); }
+  let t = 0;
+  while (w.awake() && t < 60 * 900) { w.step(NONE, [], b); t++; }
+  assert(!w.awake(), "still moving after 15 minutes");
+  console.log("stirring near the top edge settled after " + (t / 60).toFixed(0) + " s");
 }
 { // Fast enough: one step of 120 drops, stirred, with 200 moving shapes.
   const list = Array.from({ length: 120 }, (_, i) => [(i * 137) % W, (i * 71) % H, 5 + i % 56]);

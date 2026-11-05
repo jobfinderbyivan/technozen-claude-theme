@@ -17,7 +17,7 @@
   // Physics for the Take skin's water drops, with no page access. Lengths are leaf-image units, speeds are units per 1/60 s step.
 // Speed limits are set for the leaf drawn at scale 1.6 (a 2560 wide window) and adjusted by bounds.s, so they hold on screen at any size.
 function technozenWorld(list, W, H) {
-  const REST = 102 * 60, VMAX = 1.2, VAPP = 0.35, MOUSE = 0.009, APP = 0.004, RANGE = 160, MARGIN = 30, CELL = 130, STILL = 1e-4;
+  const REST = 102 * 60, VMAX = 1.2, VAPP = 0.35, MOUSE = 0.009, APP = 0.004, RANGE = 160, MARGIN = 30, CELL = 130, STILL = 1e-4, ENTER = 0.7;
   const DRAG = 0.02; // grows with speed, as in water: a hard push dies quickly into a long, faint glide
   const n = list.length, X = new Float64Array(n), Y = new Float64Array(n), VX = new Float64Array(n), VY = new Float64Array(n), R = new Float64Array(n), LIGHT = new Float64Array(n), inside = new Uint8Array(n);
   list.forEach((d, i) => { X[i] = d[0]; Y[i] = d[1]; R[i] = d[2]; LIGHT[i] = Math.min(4, Math.pow(50 / d[2], 1.5)); }); // big drops lean away slowly
@@ -27,7 +27,34 @@ function technozenWorld(list, W, H) {
     const o = R[i] + R[j] - Math.hypot(X[i] - X[j], Y[i] - Y[j]);
     if (o > 0) painted.set(i * n + j, o);
   }
-  let idle = REST;
+  let idle = REST, seed = 12345;
+  const random = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+
+  // A drop pushed fully off the window is gone. It comes back from a different edge, where there is the most free room,
+  // with the same long glide as any other push.
+  function respawn(i, exit, bounds, k) {
+    const out = R[i] * 1.5, into = R[i] * 2.5;
+    let best = -Infinity, edge = 0, along = 0;
+    for (let e = 0; e < 4; e++) {
+      if (e === exit) continue;
+      for (let c = 0; c < 12; c++) {
+        const a = 0.1 + 0.8 * (c + random()) / 12; // away from the corners, where it would slide along the edge and out again
+        const x = e === 0 ? bounds.l + into : e === 1 ? bounds.r - into : bounds.l + a * (bounds.r - bounds.l);
+        const y = e === 2 ? bounds.t + into : e === 3 ? bounds.b - into : bounds.t + a * (bounds.b - bounds.t);
+        let room = Infinity;
+        for (let j = 0; j < n; j++) if (j !== i) room = Math.min(room, Math.hypot(X[j] - x, Y[j] - y) - R[j] - R[i]);
+        if (room > best) { best = room; edge = e; along = a; }
+      }
+    }
+    X[i] = edge === 0 ? bounds.l - out : edge === 1 ? bounds.r + out : bounds.l + along * (bounds.r - bounds.l);
+    Y[i] = edge === 2 ? bounds.t - out : edge === 3 ? bounds.b + out : bounds.t + along * (bounds.b - bounds.t);
+    const speed = ENTER * k, drift = (random() - 0.5) * 0.2 * k;
+    VX[i] = edge === 0 ? speed : edge === 1 ? -speed : drift;
+    VY[i] = edge === 2 ? speed : edge === 3 ? -speed : drift;
+    inside[i] = 2; // on its way in
+    for (const key of painted.keys()) if (Math.floor(key / n) === i || key % n === i) painted.delete(key);
+    idle = 0;
+  }
 
   function contacts(vapp) {
     head.fill(-1);
@@ -111,12 +138,9 @@ function technozenWorld(list, W, H) {
       X[i] += VX[i]; Y[i] += VY[i];
       if (X[i] > bounds.l && X[i] < bounds.r && Y[i] > bounds.t && Y[i] < bounds.b) inside[i] = 1;
       if (!inside[i]) continue; // a drop the window's crop has always hidden stays out of view, it is not pulled in
-      // The window holds them softly; a drop may rest partly cut off by the edge, and is never lost.
-      const back = (d, toward) => toward < vapp ? Math.min(0.002, d * 0.001) * k : 0;
-      if (X[i] < bounds.l) { VX[i] += back(bounds.l - X[i], VX[i]); if (X[i] < bounds.l - R[i] && VX[i] < 0) VX[i] *= -0.3; }
-      if (X[i] > bounds.r) { VX[i] -= back(X[i] - bounds.r, -VX[i]); if (X[i] > bounds.r + R[i] && VX[i] > 0) VX[i] *= -0.3; }
-      if (Y[i] < bounds.t) { VY[i] += back(bounds.t - Y[i], VY[i]); if (Y[i] < bounds.t - R[i] && VY[i] < 0) VY[i] *= -0.3; }
-      if (Y[i] > bounds.b) { VY[i] -= back(Y[i] - bounds.b, -VY[i]); if (Y[i] > bounds.b + R[i] && VY[i] > 0) VY[i] *= -0.3; }
+      const gone = R[i] * 1.5 + 2; // shadow included
+      const exit = X[i] < bounds.l - gone ? 0 : X[i] > bounds.r + gone ? 1 : Y[i] < bounds.t - gone ? 2 : Y[i] > bounds.b + gone ? 3 : -1;
+      if (exit >= 0) respawn(i, exit, bounds, k);
     }
   }
 
@@ -160,7 +184,7 @@ function technozenWorld(list, W, H) {
   function startDrops() { if (!window.technozenDropsStop) runDrops().catch(e => { console.warn("[technozen] drops stay painted on the leaf:", e); stopDrops(); }); }
 
   async function runDrops() {
-    let alive = true, raf = 0, timer = 0, resizeTimer = 0, last = 0, spare = 0, activeUntil = 0, lastSample = 0;
+    let alive = true, raf = 0, timer = 0, resizeTimer = 0, scanTimer = 0, last = 0, spare = 0, activeUntil = 0, lastSample = 0, scrolledAt = -1e9;
     const off = new AbortController(), on = { passive: true, capture: true, signal: off.signal };
     const canvas = Object.assign(document.createElement("canvas"), { id: "technozen-drops" });
     canvas.style.cssText = "position:fixed;inset:0;width:100%;height:100%;z-index:-1;pointer-events:none";
@@ -171,7 +195,7 @@ function technozenWorld(list, W, H) {
     const bounds = { l: 0, t: 0, r: 0, b: 0, s: 1 }, drawnX = new Float64Array(DROPS.drops.length), drawnY = new Float64Array(DROPS.drops.length);
     let io, mo, ro;
     window.technozenDropsStop = () => {
-      alive = false; off.abort(); cancelAnimationFrame(raf); clearTimeout(timer); clearTimeout(resizeTimer);
+      alive = false; off.abort(); cancelAnimationFrame(raf); clearTimeout(timer); clearTimeout(resizeTimer); clearTimeout(scanTimer);
       if (io) io.disconnect(); if (mo) mo.disconnect(); if (ro) ro.disconnect();
       canvas.remove(); delete html.dataset.technozenInteractive; window.technozenDropsStop = null;
     };
@@ -225,10 +249,10 @@ function technozenWorld(list, W, H) {
     }
     function wake() { if (alive && !raf) { last = performance.now(); raf = requestAnimationFrame(frame); } }
 
-    // The app, measured in batches away from the frame loop, and only while something is changing. Only what is on screen counts.
-    const SELECTOR = "p,li,pre,h1,h2,h3,h4,hr,td,button,nav,aside,[data-cds],.dframe-sidebar,[role=separator]";
-    const onScreen = new Set(), rects = new WeakMap(), arrived = new WeakSet();
-    const watch = el => { if (!panel.contains(el)) io.observe(el); };
+    // Only the windows the text sits in push, and only when they themselves move or resize: never the text, never scrolling.
+    const SELECTOR = "main,nav,aside,.dframe-sidebar,.dframe-content,.dframe-pane,.dframe-card,[data-cds=Panel],[data-cds=Dialog],[role=dialog],[data-cds-popup],[data-cds=Menu],[data-cds=Popover],[data-cds=ChatComposer]";
+    const onScreen = new Set(), rects = new WeakMap();
+    const watch = el => { if (!panel.contains(el)) { io.observe(el); ro.observe(el); } };
     io = new IntersectionObserver(entries => {
       for (const e of entries) {
         if (e.isIntersecting) onScreen.add(e.target);
@@ -241,15 +265,14 @@ function technozenWorld(list, W, H) {
     function sample() {
       timer = 0;
       const now = performance.now(), gap = now - lastSample, dt = Math.min(0.3, Math.max(0.05, gap / 1000)); lastSample = now;
-      const stale = gap > 500; // after a pause the old positions say nothing about speed
+      const stale = gap > 500 || now - scrolledAt < 250; // after a pause the old positions say nothing about speed, and a scroll moves only content
       const moving = [], toWorld = 1 / (s * dt * 60), clip = v => Math.max(-3, Math.min(3, v));
       for (const el of onScreen) {
         if (!el.isConnected) { onScreen.delete(el); continue; }
         const r = el.getBoundingClientRect(), p = rects.get(el);
         rects.set(el, [r.left, r.top, r.right, r.bottom]);
         let dx = 0, dy = 0;
-        if (arrived.has(el)) { arrived.delete(el); dy = r.height / 2; } // new text pushes downward as it opens
-        else if (p && !stale) { dx = (r.left - p[0] + r.right - p[2]) / 2; dy = (r.top - p[1] + r.bottom - p[3]) / 2; }
+        if (p && !stale) { dx = (r.left - p[0] + r.right - p[2]) / 2; dy = (r.top - p[1] + r.bottom - p[3]) / 2; }
         if (Math.abs(dx) + Math.abs(dy) < 0.5 || moving.length >= 300) continue;
         if (el.getAnimations().some(a => a.effect && a.effect.getTiming().iterations === Infinity)) continue; // a spinner is not a push
         moving.push({ x0: (r.left - ox) / s, y0: (r.top - oy) / s, x1: (r.right - ox) / s, y1: (r.bottom - oy) / s, vx: clip(dx * toWorld), vy: clip(dy * toWorld) });
@@ -258,20 +281,15 @@ function technozenWorld(list, W, H) {
       if (moving.length) wake();
       if (now < activeUntil) schedule(); else shapes = [];
     }
-    for (const el of document.body.querySelectorAll(SELECTOR)) watch(el); // what is already on screen is the starting point, and pushes nothing
-    mo = new MutationObserver(records => {
-      for (const record of records) for (const node of record.addedNodes) {
-        if (node.nodeType !== 1 || panel.contains(node)) continue;
-        if (node.matches(SELECTOR)) { arrived.add(node); watch(node); }
-        for (const el of node.querySelectorAll(SELECTOR)) { arrived.add(el); watch(el); }
-      }
-      stirUp();
-    });
-    mo.observe(document.body, { childList: true, subtree: true, characterData: true });
-    ro = new ResizeObserver(stirUp); // panels that open by changing size or class add no nodes
-    for (const el of document.body.querySelectorAll("main,nav,aside,.dframe-sidebar,[data-cds=Panel]")) ro.observe(el);
-    addEventListener("scroll", stirUp, on);
-    addEventListener("transitionrun", stirUp, on);
+    ro = new ResizeObserver(stirUp);
+    const scan = () => { scanTimer = 0; if (alive) for (const el of document.body.querySelectorAll(SELECTOR)) watch(el); };
+    // New windows are noticed at most once a second, with no work per added node, so a chat switch or a streaming reply costs nothing here.
+    mo = new MutationObserver(() => { if (!scanTimer) scanTimer = setTimeout(scan, 1000); });
+    mo.observe(document.body, { childList: true, subtree: true });
+    scan();
+    addEventListener("scroll", () => { scrolledAt = performance.now(); }, on);
+    addEventListener("transitionrun", e => { if (e.target.matches && e.target.matches(SELECTOR)) { watch(e.target); stirUp(); } }, on);
+    addEventListener("animationstart", e => { if (e.target.matches && e.target.matches(SELECTOR)) { watch(e.target); stirUp(); } }, on);
     document.addEventListener("visibilitychange", stirUp, { signal: off.signal });
     addEventListener("pointermove", e => {
       const dt = Math.max(1, e.timeStamp - mt), dx = e.clientX - mx, dy = e.clientY - my, first = !mt; // only a moving mouse stirs, so a parked one lets them rest
