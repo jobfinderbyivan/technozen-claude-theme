@@ -210,13 +210,18 @@ const NONE = stir(-1e6, -1e6, 0);
 { // A drop already clear stays put, the same box again wakes nothing, and a changing box never keeps them moving.
   const w = one(), clear = { x0: 0, y0: 0, x1: 300, y1: 1000 };
   assert(!w.setZones([clear]) && !w.awake() && w.X[0] === 800, "a drop outside any box is left alone");
-  const stuck = world([[800, 500, 20]], W, H), all = { x0: -100, y0: -100, x1: W + 100, y1: H + 100 };
+  const again = one(), box2 = { x0: 600, y0: 0, x1: 900, y1: 1000 }; again.setZones([box2]);
+  for (let t = 0; t < 100; t++) again.step(NONE, [], BOUNDS);
+  again.setZones([box2]);
+  for (let t = 0; t < again.REST - 100; t++) again.step(NONE, [], BOUNDS);
+  assert(!again.awake(), "the same box again restarted the clock");
+  const stuck = world([[800, 500, 20]], W, H), all = { x0: -100, y0: -100, x1: W + 100, y1: H + 100 }; // nowhere to go: it shrinks and pops
   stuck.setZones([all]);
   for (let t = 0; t < stuck.REST + 5; t++) { if (t % 60 === 0) stuck.setZones([{ ...all, y1: H + 100 + t }]); stuck.step(NONE, [], BOUNDS); }
-  assert(!stuck.awake() && speed(stuck) === 0 && stuck.X[0] === 800, "a drop with nowhere to go rests where it is");
+  assert(!stuck.awake() && speed(stuck) === 0 && stuck.R[0] === 0, "a drop with nowhere to go ended up popped");
 }
 { // Easing out never restarts the clock, so the 102 s holds while drops are inside a box.
-  const w = world([[800, 500, 20], [100, 950, 20]], W, H), box = { x0: 200, y0: 0, x1: 1400, y1: 1000 };
+  const w = world([[800, 500, 20], [100, 950, 20]], W, H), box = { x0: 660, y0: 0, x1: 940, y1: 1000 };
   w.setZones([box]);
   for (let t = 0; t < w.REST - 1; t++) w.step(NONE, [], BOUNDS);
   assert(w.awake(), "awake just before 102 s");
@@ -236,8 +241,9 @@ const NONE = stir(-1e6, -1e6, 0);
 { // It never eases off the screen, and a respawning drop does not enter behind a box.
   const w = world([[30, 500, 20]], W, H);
   w.setZones([{ x0: 0, y0: 0, x1: 300, y1: 1000 }]);
-  for (let t = 0; t < w.REST; t++) w.step(NONE, [], BOUNDS);
-  assert(w.X[0] >= 300, "went to the free side, x=" + w.X[0]);
+  let lowest = 30;
+  for (let t = 0; t < w.REST; t++) { w.step(NONE, [], BOUNDS); lowest = Math.min(lowest, w.X[0]); }
+  assert(w.X[0] >= 300 && lowest >= 29.5, "went to the free side, x=" + w.X[0] + ", lowest " + lowest);
   const r = world([[800, 500, 20]], W, H), middle = { x0: 300, y0: 0, x1: W - 300, y1: H };
   r.step(stir(770, 500), [], BOUNDS); r.setZones([middle]); r.X[0] = W + 100; r.VX[0] = 1; r.step(NONE, [], BOUNDS);
   const into = r.X[0] < 0 ? 62 : r.X[0] > W ? W - 62 : r.X[0], top = r.Y[0] < 0 || r.Y[0] > H;
@@ -326,7 +332,7 @@ const NONE = stir(-1e6, -1e6, 0);
 { // A box appearing never jolts a drop: its push builds from nothing over seconds, in tiny steps.
   const w = one(); w.setZones([{ x0: 600, y0: 0, x1: 900, y1: 1000 }]);
   let last = 0, worst = 0;
-  for (let t = 0; t < 900; t++) { w.step(NONE, [], BOUNDS); worst = Math.max(worst, speed(w) - last); last = speed(w); if (t === 60) assert(speed(w) * 1.6 * 60 < 1, "already " + (speed(w) * 96).toFixed(1) + " px/s after a second"); }
+  for (let t = 0; t < 900; t++) { w.step(NONE, [], BOUNDS); worst = Math.max(worst, speed(w) - last); last = speed(w); if (t === 60) { assert(speed(w) * 96 < 8, "already " + (speed(w) * 96).toFixed(1) + " px/s after a second"); assert(speed(w) * 96 > 3, "still not moving after a second: " + (speed(w) * 96).toFixed(2) + " px/s"); } }
   assert(worst < 0.005, "largest speed gain in one step: " + worst);
   assert(last > 0.02, "and it does get going: " + last);
 }
@@ -343,46 +349,84 @@ const NONE = stir(-1e6, -1e6, 0);
   assert(speed(big) > 0.3, "a big drop is too sluggish: " + speed(big));
   assert(speed(big) > 2 * speed(bigShape) && speed(big) > 4 * speed(boxed), "mouse " + speed(big) + ", moving window " + speed(bigShape) + ", text " + speed(boxed));
 }
-{ // The idle process: 30% of the drops in groups spread into open space over exactly 5 minutes, too slowly to see.
+{ // The idle process: 70% of the drops on view move over exactly 5 minutes, too slowly to see, and the group spreads into open space.
   const pile = []; for (let i = 0; i < 20; i++) pile.push([300 + (i % 5) * 34, 300 + Math.floor(i / 5) * 34, 16]);
-  const list = [...pile, [1200, 700, 30]], w = world(list, W, H), b = { ...BOUNDS, s: 1.6 };
-  const moved = w.planDrift(b);
-  assert(moved === 6, "30% of a group of 20 is 6, got " + moved);
-  const before = () => { let m = Infinity; for (let i = 0; i < 20; i++) for (let j = i + 1; j < 20; j++) m = Math.min(m, Math.hypot(w.X[i] - w.X[j], w.Y[i] - w.Y[j])); return m; };
-  const x0 = Float64Array.from(w.X), y0 = Float64Array.from(w.Y); let peak = 0, t = 0;
+  const w = world(pile, W, H), b = { ...BOUNDS, s: 1.6 };
+  const nearest = () => { let sum = 0; for (let i = 0; i < 20; i++) { let m = Infinity; for (let j = 0; j < 20; j++) if (i !== j) m = Math.min(m, Math.hypot(w.X[i] - w.X[j], w.Y[i] - w.Y[j])); sum += m; } return sum / 20; };
+  const spreadBefore = nearest(), x0 = Float64Array.from(w.X), y0 = Float64Array.from(w.Y);
+  assert(w.planDrift(b) === 14, "70% of 20 is 14");
+  let peak = 0, t = 0;
   while (t < w.DRIFT - 8) {
     const px = Float64Array.from(w.X), py = Float64Array.from(w.Y);
     assert(w.driftStep(7.5), "ended early at " + (t / 60).toFixed(0) + " s"); t += 7.5;
-    for (let i = 0; i < list.length; i++) peak = Math.max(peak, Math.hypot(w.X[i] - px[i], w.Y[i] - py[i]) / 7.5 * 60 * 1.6);
+    for (let i = 0; i < 20; i++) peak = Math.max(peak, Math.hypot(w.X[i] - px[i], w.Y[i] - py[i]) / 7.5 * 60 * 1.6);
     assert(!w.awake(), "the idle process must not wake the physics");
   }
   assert(!w.driftStep(7.5), "finished at 5 minutes");
-  assert(peak <= 2.1, "visible speed: " + peak.toFixed(2) + " px/s");
-  let went = 0; for (let i = 0; i < list.length; i++) if (Math.hypot(w.X[i] - x0[i], w.Y[i] - y0[i]) > 1) { went++; assert(i < 20, "a drop that was not crowded moved"); }
-  assert(went === 6, went + " drops moved");
-  assert(w.X[20] === 1200, "the lone drop stayed");
+  assert(peak <= 2.4, "visible speed: " + peak.toFixed(2) + " px/s");
+  const angles = new Set(); let went = 0;
+  for (let i = 0; i < 20; i++) if (Math.hypot(w.X[i] - x0[i], w.Y[i] - y0[i]) > 1) { went++; angles.add(Math.floor((Math.atan2(w.Y[i] - y0[i], w.X[i] - x0[i]) + Math.PI) / (Math.PI / 4))); }
+  assert(went === 14, went + " drops moved");
+  assert(angles.size >= 4, "all went the same few ways: " + angles.size + " of 8 directions");
+  assert(nearest() > spreadBefore * 1.5, "the group did not spread: " + spreadBefore.toFixed(0) + " to " + nearest().toFixed(0));
 }
-{ // Nothing crowded, nothing moves. A touched drop returns to physics while the others carry on. Boxes and covering windows are not open space.
-  const calm = world([[200, 200, 20], [900, 700, 20]], W, H);
-  assert(calm.planDrift(BOUNDS) === 0 && !calm.driftStep(10), "drops with room were moved");
+{ // It fills empty space better than random would, and stays off text and windows. Hidden or popped drops are left alone. A touched drop returns to physics.
+  const spot = (w) => { const cells = new Set(); for (let i = 0; i < w.X.length; i++) cells.add(Math.floor(w.X[i] / 200) + "," + Math.floor(w.Y[i] / 200)); return cells.size; };
+  const list = []; for (let i = 0; i < 40; i++) list.push([500 + (i % 8) * 40, 300 + Math.floor(i / 8) * 40, 10]);
+  const filled = world(list, W, H), before = spot(filled);
+  filled.planDrift(BOUNDS); for (let t = 0; t < 2500; t++) filled.driftStep(7.5);
+  assert(spot(filled) >= before * 1.8, "cells occupied went from " + before + " to " + spot(filled));
+  let touching = 0;
+  for (let i = 0; i < list.length; i++) { if (filled.X[i] === list[i][0] && filled.Y[i] === list[i][1]) continue; for (let j = 0; j < list.length; j++) if (i !== j && Math.hypot(filled.X[i] - filled.X[j], filled.Y[i] - filled.Y[j]) < 20) touching++; }
+  assert(touching === 0, touching + " moved drops landed on another drop, with open space around");
   const pile = []; for (let i = 0; i < 10; i++) pile.push([300 + (i % 5) * 34, 300 + Math.floor(i / 5) * 34, 16]);
-  const w = world(pile, W, H), blocked = [{ x0: 0, y0: 0, x1: W, y1: 200 }, { x0: 0, y0: 450, x1: W, y1: H }, { x0: 600, y0: 0, x1: W, y1: H }];
-  w.setZones([blocked[0]]); w.setCovers(blocked.slice(1));
-  for (let t = 0; t < 7000 && w.awake(); t++) w.step(NONE, [], BOUNDS);
-  const count = w.planDrift(BOUNDS);
+  const w = world(pile, W, H), z = { x0: 0, y0: 0, x1: W, y1: 200 }, c1 = { x0: 0, y0: 450, x1: W, y1: H }, c2 = { x0: 600, y0: 0, x1: W, y1: H };
+  w.setCovers([c1, c2]);
+  w.setZones([z]);
+  assert(!w.awake() && w.planDrift(BOUNDS) > 0, "should plan with room left");
   for (let t = 0; t < 2500; t++) w.driftStep(7.5);
-  for (let i = 0; i < pile.length; i++) assert(Math.hypot(w.X[i] - w.X[i], 0) === 0 && w.Y[i] > 200 - 16 - 1 && w.Y[i] < 450 + 16 + 1 && w.X[i] < 600 + 16 + 1, "drifted out of the open space: " + w.X[i] + "," + w.Y[i]);
-  const t2 = world(pile, W, H); assert(t2.planDrift(BOUNDS) === 3, "30% of 10");
-  const movers = []; const start = Float64Array.from(t2.X);
+  const moved = pile.map((d, i) => w.X[i] !== d[0] || w.Y[i] !== d[1]);
+  pile.forEach((d, i) => { if (moved[i]) assert(w.Y[i] > 200 + 16 - 1 && w.Y[i] < 450 - 16 + 1 && w.X[i] < 600 - 16 + 1, "drifted out of the open space: " + w.X[i] + "," + w.Y[i]); });
+  const hidden = world([[-30, 500, 20], [800, 500, 20], [900, 500, 20]], W, H); hidden.planDrift(BOUNDS); for (let t = 0; t < 2500; t++) hidden.driftStep(7.5);
+  assert(hidden.X[0] === -30, "a hidden drop was moved");
+  const t2 = world(pile, W, H); assert(t2.planDrift(BOUNDS) === 7, "70% of 10");
+  const movers = [];
   for (let t = 0; t < 400; t++) t2.driftStep(7.5);
-  for (let i = 0; i < pile.length; i++) if (t2.X[i] !== start[i] || t2.Y[i] !== pile[i][1]) movers.push(i);
-  assert(movers.length === 3, "movers " + movers.length);
-  const held = movers[0], others = movers[1]; const hx = t2.X[others];
-  t2.step(stir(t2.X[held] - 30, t2.Y[held], 0.5), [], BOUNDS); const heldClock = [t2.X[held], t2.Y[held]];
-  t2.VX.fill(0); t2.VY.fill(0);
-  const hy = t2.Y[held];
+  for (let i = 0; i < pile.length; i++) if (t2.X[i] !== pile[i][0] || t2.Y[i] !== pile[i][1]) movers.push(i);
+  assert(movers.length === 7, "movers " + movers.length);
+  const held = movers[0];
+  t2.step(stir(t2.X[held] - 30, t2.Y[held], 0.5), [], BOUNDS); const hx = t2.X[held], hy = t2.Y[held];
   t2.driftStep(7.5);
-  assert(t2.X[held] === heldClock[0] && t2.Y[held] === hy, "a touched drop kept being placed");
+  assert(t2.X[held] === hx && t2.Y[held] === hy, "a touched drop kept being placed");
+}
+{ // A long way out from under text: 10% smaller every 2 s. Near the edge of the text: no shrinking at all.
+  const w = world([[800, 500, 40]], W, H); w.setZones([{ x0: 200, y0: 0, x1: 1400, y1: 1000 }]);
+  for (let t = 0; t < 120; t++) w.step(NONE, [], BOUNDS);
+  assert(Math.abs(w.R[0] - 36) < 0.2, "after 2 s the size is " + w.R[0]);
+  for (let t = 0; t < 120; t++) w.step(NONE, [], BOUNDS);
+  assert(Math.abs(w.R[0] - 32.4) < 0.2, "after 4 s the size is " + w.R[0]);
+  const near = world([[800, 500, 40]], W, H); near.setZones([{ x0: 760, y0: 0, x1: 1400, y1: 1000 }]);
+  for (let t = 0; t < 600; t++) near.step(NONE, [], BOUNDS);
+  assert(near.R[0] === 40, "a drop near the edge of the text shrank to " + near.R[0]);
+  const clear = world([[800, 500, 40]], W, H);
+  for (let t = 0; t < 200; t++) clear.step(stir(760, 500, 0.5), [], BOUNDS);
+  assert(clear.R[0] === 40, "a drop clear of text shrank");
+}
+{ // Past the tiniest size it pops once, drops out of everything, and comes back at full size from outside the window, gliding in.
+  const w = world([[800, 500, 20], [100, 100, 10]], W, H), box = { x0: 200, y0: 0, x1: 1400, y1: 1000 };
+  w.setZones([box]);
+  let popped = [], at = 0;
+  for (let t = 0; t < w.REST && !popped.length; t++) { const before = w.R[0]; w.step(NONE, [], BOUNDS); popped = w.takePops(); if (popped.length) { at = t; assert(before < 3.1 && before >= 3, "popped at size " + before); } }
+  assert(popped.length === 1, "never popped");
+  assert(popped[0].x > 200 && popped[0].x < 1400, "the pop is where the drop was");
+  assert(w.R[0] === 0 && speed(w) === 0, "a popped drop is gone");
+  assert(Math.abs(at / 60 - 2 * Math.log(3 / 20) / Math.log(0.9)) < 2, "20 down to 3 should take 36 s, took " + (at / 60).toFixed(0));
+  for (let t = 0; t < 300; t++) w.step(stir(800, 500), [], BOUNDS);
+  assert(w.R[0] === 0 && w.takePops().length === 0, "a popped drop came back by itself or popped twice");
+  w.revive(0, BOUNDS);
+  assert(w.R[0] === 20, "back at full size");
+  assert(w.X[0] < 0 || w.X[0] > W || w.Y[0] < 0 || w.Y[0] > H, "it comes from outside the screen: " + w.X[0] + "," + w.Y[0]);
+  assert(speed(w) > 0.3 && w.awake(), "and glides in");
 }
 { // Fast enough: one step of 120 drops, stirred, with 200 moving shapes.
   const list = Array.from({ length: 120 }, (_, i) => [(i * 137) % W, (i * 71) % H, 5 + i % 56]);

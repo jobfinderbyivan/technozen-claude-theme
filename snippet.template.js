@@ -42,7 +42,7 @@
   function startDrops() { if (!window.technozenDropsStop) runDrops().catch(e => { console.warn("[technozen] drops stay painted on the leaf:", e); stopDrops(); }); }
 
   async function runDrops() {
-    let alive = true, raf = 0, timer = 0, resizeTimer = 0, scanTimer = 0, zoneTimer = 0, zoneIdle = 0, driftTimer = 0, driftTick = 0, busyAt = 0, restless = true, last = 0, spare = 0, activeUntil = 0, lastSample = 0, scrolledAt = -1e9;
+    let alive = true, raf = 0, timer = 0, resizeTimer = 0, scanTimer = 0, zoneTimer = 0, zoneIdle = 0, zonesStale = false, driftTimer = 0, driftTick = 0, busyAt = 0, restless = true, last = 0, spare = 0, activeUntil = 0, lastSample = 0, scrolledAt = -1e9;
     const off = new AbortController(), on = { passive: true, capture: true, signal: off.signal };
     const canvas = Object.assign(document.createElement("canvas"), { id: "technozen-drops" });
     canvas.style.cssText = "position:fixed;inset:0;width:100%;height:100%;z-index:-1;pointer-events:none";
@@ -50,10 +50,11 @@
     const world = technozenWorld(DROPS.drops, DROPS.w, DROPS.h);
     const mouse = { x: -1e6, y: -1e6, vx: 0, vy: 0, power: 0 };
     let shapes = [], s = 1, ox = 0, oy = 0, dpr = 1, mx = 0, my = 0, mt = 0;
-    const bounds = { l: 0, t: 0, r: 0, b: 0, s: 1 }, drawnX = new Float64Array(DROPS.drops.length), drawnY = new Float64Array(DROPS.drops.length);
+    const bounds = { l: 0, t: 0, r: 0, b: 0, s: 1 }, drawnX = new Float64Array(DROPS.drops.length), drawnY = new Float64Array(DROPS.drops.length), drawnR = new Float64Array(DROPS.drops.length);
+    let bursts = []; const returning = new Set(), revivals = new Set();
     let io, mo, ro;
     window.technozenDropsStop = () => {
-      alive = false; off.abort(); cancelAnimationFrame(raf); clearTimeout(timer); clearTimeout(resizeTimer); clearTimeout(scanTimer); clearTimeout(driftTimer); clearInterval(driftTick); clearTimeout(zoneTimer);
+      alive = false; off.abort(); cancelAnimationFrame(raf); clearTimeout(timer); clearTimeout(resizeTimer); clearTimeout(scanTimer); clearTimeout(driftTimer); clearInterval(driftTick); revivals.forEach(clearTimeout); clearTimeout(zoneTimer);
       if (io) io.disconnect(); if (mo) mo.disconnect(); if (ro) ro.disconnect();
       canvas.remove(); delete html.dataset.technozenInteractive; window.technozenDropsStop = null;
     };
@@ -90,27 +91,45 @@
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       for (let i = 0; i < cells.length; i++) {
         const c = cells[i], x = world.X[i] + world.VX[i] * ahead, y = world.Y[i] + world.VY[i] * ahead; // carried on past the 60 Hz step to this exact moment
-        drawnX[i] = x; drawnY[i] = y;
-        ctx.drawImage(sheet, c.x * sx, c.y * sy, c.w * sx, c.h * sy, (ox + (x - c.left) * s) * dpr, (oy + (y - c.top) * s) * dpr, c.w * k, c.h * k);
+        const size = world.R[i] / DROPS.drops[i][2];
+        drawnX[i] = x; drawnY[i] = y; drawnR[i] = world.R[i];
+        if (size) ctx.drawImage(sheet, c.x * sx, c.y * sy, c.w * sx, c.h * sy, (ox + (x - c.left * size) * s) * dpr, (oy + (y - c.top * size) * s) * dpr, c.w * k * size, c.h * k * size);
       }
+      const now = performance.now();
+      bursts = bursts.filter(b => now - b.t < 350);
+      for (const b of bursts) { // a pop: a thin ring opening and a few specks flying off, gone in a third of a second
+        const u = (now - b.t) / 350, x = (ox + b.x * s) * dpr, y = (oy + b.y * s) * dpr, reach = (4 + 18 * u) * s * dpr;
+        ctx.globalAlpha = 1 - u; ctx.strokeStyle = ctx.fillStyle = "#fff"; ctx.lineWidth = 1.2 * dpr;
+        ctx.beginPath(); ctx.arc(x, y, reach, 0, 6.3); ctx.stroke();
+        for (let a = 0; a < 6; a++) { ctx.beginPath(); ctx.arc(x + Math.cos(a * 1.05) * reach * 1.3, y + Math.sin(a * 1.05) * reach * 1.3, 1.1 * dpr, 0, 6.3); ctx.fill(); }
+      }
+      ctx.globalAlpha = 1;
     }
     function frame(now) {
       raf = 0;
       if (!alive) return;
       spare = Math.min(spare + (now - last) / 1000, 4 / 60); last = now;
       for (; spare >= 1 / 60; spare -= 1 / 60) { world.step(mouse, shapes, bounds); mouse.power *= 0.9; }
-      drawIfMoved();
-      if (world.awake() || mouse.power > 0.02 || shapes.length) raf = requestAnimationFrame(frame);
+      for (const p of world.takePops()) {
+        const i = world.R.findIndex((r, j) => r === 0 && !returning.has(j));
+        bursts.push({ x: p.x, y: p.y, t: now });
+        if (i >= 0) { // a new drop comes in from outside within 5 minutes
+          const back = setTimeout(() => { returning.delete(i); revivals.delete(back); if (alive) { world.revive(i, bounds); wake(); } }, 30000 + Math.random() * 270000);
+          returning.add(i); revivals.add(back);
+        }
+      }
+      if (bursts.length) draw(); else drawIfMoved();
+      if (world.awake() || mouse.power > 0.02 || shapes.length || bursts.length) raf = requestAnimationFrame(frame);
       else if (restless && !driftTick) { clearTimeout(driftTimer); driftTimer = setTimeout(beginDrift, 5000); }
     }
     function drawIfMoved() { // a glide moving a fraction of a pixel costs no drawing
       let moved = 0;
       const ahead = spare * 60;
-      for (let i = 0; i < cells.length; i++) moved = Math.max(moved, Math.abs(world.X[i] + world.VX[i] * ahead - drawnX[i]), Math.abs(world.Y[i] + world.VY[i] * ahead - drawnY[i]));
+      for (let i = 0; i < cells.length; i++) moved = Math.max(moved, Math.abs(world.X[i] + world.VX[i] * ahead - drawnX[i]), Math.abs(world.Y[i] + world.VY[i] * ahead - drawnY[i]), Math.abs(world.R[i] - drawnR[i]));
       if (moved * s * dpr > 0.25) draw();
     }
     function wake() { clearTimeout(driftTimer); restless = true; if (alive && !raf) { last = performance.now(); raf = requestAnimationFrame(frame); } }
-    // Once everything has rested for 5 s, crowded drops spread out too slowly to see. It stands still whenever Claude is busy or hidden, and costs nothing once done.
+    // Once everything has rested for 5 s, most of the drops wander into the empty space too slowly to see. It stands still whenever Claude is busy or hidden, and costs nothing once done.
     function beginDrift() {
       if (!alive || driftTick || world.awake() || !canvas.isConnected) return;
       restless = false;
@@ -212,20 +231,21 @@
         world.setCovers(covers);
         if (world.setZones(boxes.map(z => ({ x0: (z.x0 - ox) / s, y0: (z.y0 - oy) / s, x1: (z.x1 - ox) / s, y1: (z.y1 - oy) / s })))) wake();
         else if (restless && !raf && !driftTick) { clearTimeout(driftTimer); driftTimer = setTimeout(beginDrift, 5000); }
+        if (zonesStale) { zonesStale = false; settleZones(300); }
       };
       zoneIdle = requestIdleCallback(probe, { timeout: 1000 });
     }
-    function settleZones() { clearTimeout(zoneTimer); if (zoneIdle) { cancelIdleCallback(zoneIdle); zoneIdle = 0; } zoneTimer = setTimeout(findZones, 1000); }
+    function settleZones(wait) { if (zoneTimer || zoneIdle) zonesStale = true; else zoneTimer = setTimeout(findZones, wait); } // a steady beat, so text that keeps moving is still noticed
     ro = new ResizeObserver(stirUp);
     const scan = () => { scanTimer = 0; if (alive) for (const el of document.body.querySelectorAll(SELECTOR)) watch(el); };
     // New windows are noticed at most once a second, with no work per added node, so a chat switch or a streaming reply costs nothing here.
-    mo = new MutationObserver(() => { busyAt = performance.now(); if (!scanTimer) scanTimer = setTimeout(scan, 1000); settleZones(); });
+    mo = new MutationObserver(() => { busyAt = performance.now(); if (!scanTimer) scanTimer = setTimeout(scan, 1000); settleZones(800); });
     mo.observe(document.body, { childList: true, subtree: true });
     scan();
-    addEventListener("scroll", () => { scrolledAt = busyAt = performance.now(); settleZones(); }, on);
+    addEventListener("scroll", () => { scrolledAt = busyAt = performance.now(); settleZones(300); }, on);
     addEventListener("transitionrun", e => { if (e.target.matches && e.target.matches(SELECTOR)) { watch(e.target); stirUp(); } }, on);
     addEventListener("animationstart", e => { if (e.target.matches && e.target.matches(SELECTOR)) { watch(e.target); stirUp(); } }, on);
-    document.addEventListener("visibilitychange", () => { stirUp(); settleZones(); }, { signal: off.signal });
+    document.addEventListener("visibilitychange", () => { stirUp(); settleZones(300); }, { signal: off.signal });
     addEventListener("pointermove", e => {
       const dt = Math.max(1, e.timeStamp - mt), dx = e.clientX - mx, dy = e.clientY - my, first = !mt; // only a moving mouse stirs, so a parked one lets them rest
       mx = e.clientX; my = e.clientY; mt = e.timeStamp;
@@ -236,7 +256,7 @@
       wake();
     }, on);
     addEventListener("resize", () => {
-      clearTimeout(resizeTimer); stirUp(); settleZones();
+      clearTimeout(resizeTimer); stirUp(); settleZones(300);
       if (canvas.isConnected && innerWidth && innerHeight) { fit(); draw(); } // the old sheet stretches for a moment while the window drags
       resizeTimer = setTimeout(reveal, 150);
     }, on);
@@ -248,7 +268,7 @@
       if (canvas.isConnected) return;
       html.appendChild(canvas);
       html.dataset.technozenInteractive = "on"; // the painted drops go in the same instant the live ones appear
-      settleZones();
+      settleZones(300);
     }
     reveal();
   }

@@ -1,7 +1,7 @@
 // Physics for the Take skin's water drops, with no page access. Lengths are leaf-image units, speeds are units per 1/60 s step.
 // Speed limits are set for the leaf drawn at scale 1.6 (a 2560 wide window) and adjusted by bounds.s, so they hold on screen at any size.
 function technozenWorld(list, W, H) {
-  const REST = 102 * 60, VMAX = 1.2, VAPP = 0.25, MOUSE = 0.009, APP = 0.001, RANGE = 160, MARGIN = 30, CELL = 130, STILL = 1e-4, ENTER = 0.7, VZONE = 0.12, ZONE = 0.0012, RAMP = 480, DEEP = 12, LEAVE = 0.5, EDGE = 0.995, DRIFT = 300 * 60, DRIFT_REACH = 400, CROWDED = 14;
+  const REST = 102 * 60, VMAX = 1.2, VAPP = 0.25, MOUSE = 0.009, APP = 0.001, RANGE = 160, MARGIN = 30, CELL = 130, STILL = 1e-4, ENTER = 0.7, VZONE = 0.12, ZONE = 0.0012, RAMP = 120, LONG = 150, TINY = 3, SHRINK = Math.pow(0.9, 1 / 120), DEEP = 12, LEAVE = 0.5, EDGE = 0.995, DRIFT = 300 * 60, DRIFT_REACH = 380, DRIFT_SHARE = 0.7;
   const DRAG = 0.02; // grows with speed, as in water: a hard push dies quickly into a long, faint glide
   const n = list.length, X = new Float64Array(n), Y = new Float64Array(n), VX = new Float64Array(n), VY = new Float64Array(n), R = new Float64Array(n), LIGHT = new Float64Array(n), inside = new Uint8Array(n);
   list.forEach((d, i) => { X[i] = d[0]; Y[i] = d[1]; R[i] = d[2]; LIGHT[i] = Math.max(1.15, Math.min(4, Math.pow(50 / d[2], 1.5))); }); // big drops lean away more slowly, but not much
@@ -12,40 +12,43 @@ function technozenWorld(list, W, H) {
     if (o > 0) painted.set(i * n + j, o);
   }
   const clock = new Int32Array(n).fill(REST); // steps since each drop's own last push: one drop arriving must not keep the rest moving
-  let seed = 12345, zones = [], borders = [], covers = [], drift = [], driftT = 0;
+  let seed = 12345, zones = [], borders = [], covers = [], drift = [], driftT = 0, pops = [];
+  const lightness = r => Math.max(1.15, Math.min(4, Math.pow(50 / r, 1.5))); // big drops lean away more slowly, but not much
 
-  // The idle process. Once everything is at rest, the most crowded 30% of the drops that sit in groups each set off for the emptiest open
-  // spot in reach, over 5 minutes. They are placed by a slow curve rather than pushed, peaking near 2 px/s, too slowly to see.
+  // Past the tiniest size a drop pops. It stays in the lists with no size and far out of the way until it is brought back.
+  function pop(i) {
+    pops.push({ x: X[i], y: Y[i], r: R[i] });
+    X[i] = Y[i] = -1e5; R[i] = 0; VX[i] = VY[i] = 0; clock[i] = REST; inside[i] = 0; easing[i] = 0; within[i] = 0;
+  }
+  function revive(i, bounds) { // back at full size from outside the window, with the usual long glide in
+    R[i] = list[i][2]; LIGHT[i] = lightness(R[i]);
+    respawn(i, -1, bounds, 1.6 / (bounds.s || 1.6));
+  }
+
+  // The idle process. Once everything is at rest, 70% of the drops on view set off for somewhere else over 5 minutes, placed along a slow
+  // curve rather than pushed, peaking near 2 px/s, too slowly to see. Each tries many random spots and takes the roomiest: directions look random, the gaps fill.
   function planDrift(bounds) {
-    const k = bounds.s || 1.6, reach = DRIFT_REACH / k, shown = i => X[i] > bounds.l && X[i] < bounds.r && Y[i] > bounds.t && Y[i] < bounds.b;
-    const inRect = (x, y, r, z) => x + r > z.x0 && x - r < z.x1 && y + r > z.y0 && y - r < z.y1;
-    const crowd = new Float64Array(n), clearance = new Float64Array(n).fill(Infinity);
-    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
-      if (i === j || !shown(i) || !shown(j)) continue;
-      const gap = Math.hypot(X[i] - X[j], Y[i] - Y[j]) - R[i] - R[j];
-      clearance[i] = Math.min(clearance[i], gap);
-      if (gap < CROWDED) crowd[i] += CROWDED - gap;
-    }
-    const grouped = []; for (let i = 0; i < n; i++) if (crowd[i] > 0) grouped.push(i);
-    grouped.sort((a, b) => crowd[b] - crowd[a]);
-    const moving = grouped.slice(0, Math.ceil(grouped.length * 0.3)), leaving = new Uint8Array(n);
+    const k = bounds.s || 1.6, reach = DRIFT_REACH / k, inRect = (x, y, r, z) => x + r > z.x0 && x - r < z.x1 && y + r > z.y0 && y - r < z.y1;
+    const shown = []; for (let i = 0; i < n; i++) if (R[i] > 0 && X[i] > bounds.l && X[i] < bounds.r && Y[i] > bounds.t && Y[i] < bounds.b) shown.push(i);
+    for (let i = shown.length - 1; i > 0; i--) { const j = Math.floor(random() * (i + 1)), t = shown[i]; shown[i] = shown[j]; shown[j] = t; }
+    const moving = shown.slice(0, Math.ceil(shown.length * DRIFT_SHARE)), leaving = new Uint8Array(n);
     for (const i of moving) leaving[i] = 1;
     const toX = Float64Array.from(X), toY = Float64Array.from(Y);
     drift = []; driftT = 0;
     for (const i of moving) {
-      let best = clearance[i] + 8, bx = 0, by = 0, found = false;
-      for (let gy = 0; gy < 20; gy++) for (let gx = 0; gx < 32; gx++) {
-        const x = bounds.l + (gx + 0.5) / 32 * (bounds.r - bounds.l), y = bounds.t + (gy + 0.5) / 20 * (bounds.b - bounds.t);
-        if (Math.hypot(x - X[i], y - Y[i]) > reach || x < bounds.l + R[i] || x > bounds.r - R[i] || y < bounds.t + R[i] || y > bounds.b - R[i]) continue;
+      let best = -Infinity, bx = 0, by = 0;
+      for (let tries = 0; tries < 48; tries++) {
+        const a = random() * 6.283, d = reach * (0.2 + 0.8 * Math.sqrt(random())), x = X[i] + Math.cos(a) * d, y = Y[i] + Math.sin(a) * d;
+        if (x < bounds.l + R[i] || x > bounds.r - R[i] || y < bounds.t + R[i] || y > bounds.b - R[i]) continue;
         if (zones.some(z => inRect(x, y, R[i], z)) || covers.some(z => inRect(x, y, R[i], z))) continue; // open leaf only
         let room = Infinity;
-        for (let j = 0; j < n && room > best; j++) if (j !== i && !leaving[j]) room = Math.min(room, Math.hypot(toX[j] - x, toY[j] - y) - R[j] - R[i]);
-        if (room > best) { best = room; bx = x; by = y; found = true; }
+        for (let j = 0; j < n && room > best; j++) if (j !== i && !leaving[j] && R[j] > 0) room = Math.min(room, Math.hypot(toX[j] - x, toY[j] - y) - R[j] - R[i]);
+        if (room > best) { best = room; bx = x; by = y; }
       }
       leaving[i] = 0;
-      if (!found) continue;
+      if (best === -Infinity) continue;
       toX[i] = bx; toY[i] = by;
-      drift.push({ i, x0: X[i], y0: Y[i], x1: bx, y1: by });
+      drift.push({ i, x0: X[i], y0: Y[i], x1: bx, y1: by, bend: (random() - 0.5) * 0.3 });
     }
     return drift.length;
   }
@@ -53,7 +56,8 @@ function technozenWorld(list, W, H) {
     driftT += steps;
     const u = Math.min(1, driftT / DRIFT), e = u * u * (3 - 2 * u);
     drift = drift.filter(d => clock[d.i] >= REST); // a drop the mouse or the app has touched goes back to ordinary physics
-    for (const d of drift) { X[d.i] = d.x0 + (d.x1 - d.x0) * e; Y[d.i] = d.y0 + (d.y1 - d.y0) * e; }
+    const arc = Math.sin(Math.PI * e); // a gentle curve, so no path looks planned
+    for (const d of drift) { X[d.i] = d.x0 + (d.x1 - d.x0) * e - (d.y1 - d.y0) * d.bend * arc; Y[d.i] = d.y0 + (d.y1 - d.y0) * e + (d.x1 - d.x0) * d.bend * arc; }
     if (u >= 1) drift = [];
     return drift.length > 0;
   }
@@ -190,9 +194,13 @@ function technozenWorld(list, W, H) {
         const sides = [[z.x0 - R[i] - bounds.l, X[i] - z.x0 + R[i], -1, 0], [bounds.r - z.x1 - R[i], z.x1 - X[i] + R[i], 1, 0], [z.y0 - R[i] - bounds.t, Y[i] - z.y0 + R[i], 0, -1], [bounds.b - z.y1 - R[i], z.y1 - Y[i] + R[i], 0, 1]];
         let way = null;
         for (const side of sides) if (side[0] >= 0 && (!way || side[1] < way[1])) way = side;
+        if (!way || way[1] > LONG) { // a long way out from under the text: it shrinks 10% every 2 s as it goes, and past the tiniest size it pops
+          R[i] *= SHRINK; LIGHT[i] = lightness(R[i]);
+          if (R[i] < TINY) { pop(i); break; }
+        }
         if (!way) break; // nowhere to go
         easing[i] = Math.min(1, easing[i] + 1 / RAMP);
-        const ramp = easing[i] * easing[i]; // starts from nothing and builds over seconds, so a box appearing never jolts a drop
+        const ramp = easing[i]; // starts from nothing and builds over 2 s, so a box appearing never jolts a drop
         if (Math.hypot(VX[i], VY[i]) >= VZONE * k * ramp) break; // only ever adds a little speed, and never brakes a drop already moving
         let cursor = 0;
         if (known) cursor = Math.max(0, 1 - Math.max(0, Math.hypot(X[i] - mouse.x, Y[i] - mouse.y) - R[i]) / RANGE);
@@ -232,6 +240,6 @@ function technozenWorld(list, W, H) {
     }
   }
 
-  return { X, Y, VX, VY, R, REST, VMAX, VAPP, VZONE, step, setZones, setBorders: next => { borders = next; }, setCovers: next => { covers = next; }, planDrift, driftStep, DRIFT, awake: () => clock.some(c => c < REST) };
+  return { X, Y, VX, VY, R, REST, VMAX, VAPP, VZONE, step, setZones, setBorders: next => { borders = next; }, setCovers: next => { covers = next; }, planDrift, driftStep, DRIFT, revive, takePops: () => { const p = pops; pops = []; return p; }, awake: () => clock.some(c => c < REST) };
 }
 if (typeof module !== "undefined") module.exports = technozenWorld;
