@@ -17,10 +17,10 @@
   // Physics for the Take skin's water drops, with no page access. Lengths are leaf-image units, speeds are units per 1/60 s step.
 // Speed limits are set for the leaf drawn at scale 1.6 (a 2560 wide window) and adjusted by bounds.s, so they hold on screen at any size.
 function technozenWorld(list, W, H) {
-  const REST = 102 * 60, VMAX = 1.2, VAPP = 0.35, MOUSE = 0.009, APP = 0.004, RANGE = 160, MARGIN = 30, CELL = 130, STILL = 1e-4, ENTER = 0.7, VZONE = 0.25, ZONE = 0.003, DEEP = 12, LEAVE = 0.5, EDGE = 0.995;
+  const REST = 102 * 60, VMAX = 1.2, VAPP = 0.25, MOUSE = 0.009, APP = 0.001, RANGE = 160, MARGIN = 30, CELL = 130, STILL = 1e-4, ENTER = 0.7, VZONE = 0.12, ZONE = 0.0012, RAMP = 480, DEEP = 12, LEAVE = 0.5, EDGE = 0.995, DRIFT = 300 * 60, DRIFT_REACH = 400, CROWDED = 14;
   const DRAG = 0.02; // grows with speed, as in water: a hard push dies quickly into a long, faint glide
   const n = list.length, X = new Float64Array(n), Y = new Float64Array(n), VX = new Float64Array(n), VY = new Float64Array(n), R = new Float64Array(n), LIGHT = new Float64Array(n), inside = new Uint8Array(n);
-  list.forEach((d, i) => { X[i] = d[0]; Y[i] = d[1]; R[i] = d[2]; LIGHT[i] = Math.min(4, Math.pow(50 / d[2], 1.5)); }); // big drops lean away slowly
+  list.forEach((d, i) => { X[i] = d[0]; Y[i] = d[1]; R[i] = d[2]; LIGHT[i] = Math.max(1.15, Math.min(4, Math.pow(50 / d[2], 1.5))); }); // big drops lean away more slowly, but not much
   const cols = Math.ceil((W + 1200) / CELL), rows = Math.ceil((H + 1200) / CELL), head = new Int32Array(cols * rows), next = new Int32Array(n);
   const painted = new Map(); // overlaps painted into the leaf hold no energy: only overlap beyond these pushes, and they shrink as drops part
   for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
@@ -28,8 +28,52 @@ function technozenWorld(list, W, H) {
     if (o > 0) painted.set(i * n + j, o);
   }
   const clock = new Int32Array(n).fill(REST); // steps since each drop's own last push: one drop arriving must not keep the rest moving
-  let seed = 12345, zones = [], borders = [];
-  const within = new Uint8Array(n);
+  let seed = 12345, zones = [], borders = [], covers = [], drift = [], driftT = 0;
+
+  // The idle process. Once everything is at rest, the most crowded 30% of the drops that sit in groups each set off for the emptiest open
+  // spot in reach, over 5 minutes. They are placed by a slow curve rather than pushed, peaking near 2 px/s, too slowly to see.
+  function planDrift(bounds) {
+    const k = bounds.s || 1.6, reach = DRIFT_REACH / k, shown = i => X[i] > bounds.l && X[i] < bounds.r && Y[i] > bounds.t && Y[i] < bounds.b;
+    const inRect = (x, y, r, z) => x + r > z.x0 && x - r < z.x1 && y + r > z.y0 && y - r < z.y1;
+    const crowd = new Float64Array(n), clearance = new Float64Array(n).fill(Infinity);
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+      if (i === j || !shown(i) || !shown(j)) continue;
+      const gap = Math.hypot(X[i] - X[j], Y[i] - Y[j]) - R[i] - R[j];
+      clearance[i] = Math.min(clearance[i], gap);
+      if (gap < CROWDED) crowd[i] += CROWDED - gap;
+    }
+    const grouped = []; for (let i = 0; i < n; i++) if (crowd[i] > 0) grouped.push(i);
+    grouped.sort((a, b) => crowd[b] - crowd[a]);
+    const moving = grouped.slice(0, Math.ceil(grouped.length * 0.3)), leaving = new Uint8Array(n);
+    for (const i of moving) leaving[i] = 1;
+    const toX = Float64Array.from(X), toY = Float64Array.from(Y);
+    drift = []; driftT = 0;
+    for (const i of moving) {
+      let best = clearance[i] + 8, bx = 0, by = 0, found = false;
+      for (let gy = 0; gy < 20; gy++) for (let gx = 0; gx < 32; gx++) {
+        const x = bounds.l + (gx + 0.5) / 32 * (bounds.r - bounds.l), y = bounds.t + (gy + 0.5) / 20 * (bounds.b - bounds.t);
+        if (Math.hypot(x - X[i], y - Y[i]) > reach || x < bounds.l + R[i] || x > bounds.r - R[i] || y < bounds.t + R[i] || y > bounds.b - R[i]) continue;
+        if (zones.some(z => inRect(x, y, R[i], z)) || covers.some(z => inRect(x, y, R[i], z))) continue; // open leaf only
+        let room = Infinity;
+        for (let j = 0; j < n && room > best; j++) if (j !== i && !leaving[j]) room = Math.min(room, Math.hypot(toX[j] - x, toY[j] - y) - R[j] - R[i]);
+        if (room > best) { best = room; bx = x; by = y; found = true; }
+      }
+      leaving[i] = 0;
+      if (!found) continue;
+      toX[i] = bx; toY[i] = by;
+      drift.push({ i, x0: X[i], y0: Y[i], x1: bx, y1: by });
+    }
+    return drift.length;
+  }
+  function driftStep(steps) { // returns whether there is more to do
+    driftT += steps;
+    const u = Math.min(1, driftT / DRIFT), e = u * u * (3 - 2 * u);
+    drift = drift.filter(d => clock[d.i] >= REST); // a drop the mouse or the app has touched goes back to ordinary physics
+    for (const d of drift) { X[d.i] = d.x0 + (d.x1 - d.x0) * e; Y[d.i] = d.y0 + (d.y1 - d.y0) * e; }
+    if (u >= 1) drift = [];
+    return drift.length > 0;
+  }
+  const within = new Uint8Array(n), easing = new Float64Array(n);
   const inZone = (i, z) => X[i] + R[i] > z.x0 && X[i] - R[i] < z.x1 && Y[i] + R[i] > z.y0 && Y[i] - R[i] < z.y1;
 
   // Text boxes and panels drops should ease out of, {x0, y0, x1, y1}. Only a drop newly caught inside one starts the 102 s,
@@ -155,20 +199,24 @@ function technozenWorld(list, W, H) {
     // Ease out of any text box by its nearest side that stays on screen. No wall: the mouse can still push a drop back through.
     if (zones.length) for (let i = 0; i < n; i++) {
       if (clock[i] >= REST) continue;
+      let held = false;
       for (const z of zones) {
         if (!inZone(i, z)) continue;
+        held = true;
         const sides = [[z.x0 - R[i] - bounds.l, X[i] - z.x0 + R[i], -1, 0], [bounds.r - z.x1 - R[i], z.x1 - X[i] + R[i], 1, 0], [z.y0 - R[i] - bounds.t, Y[i] - z.y0 + R[i], 0, -1], [bounds.b - z.y1 - R[i], z.y1 - Y[i] + R[i], 0, 1]];
         let way = null;
         for (const side of sides) if (side[0] >= 0 && (!way || side[1] < way[1])) way = side;
-        if (!way) continue; // nowhere to go
+        if (!way) break; // nowhere to go
+        easing[i] = Math.min(1, easing[i] + 1 / RAMP);
+        const ramp = easing[i] * easing[i]; // starts from nothing and builds over seconds, so a box appearing never jolts a drop
+        if (Math.hypot(VX[i], VY[i]) >= VZONE * k * ramp) break; // only ever adds a little speed, and never brakes a drop already moving
         let cursor = 0;
         if (known) cursor = Math.max(0, 1 - Math.max(0, Math.hypot(X[i] - mouse.x, Y[i] - mouse.y) - R[i]) / RANGE);
-        const f = ZONE * k * LIGHT[i] * (1 - cursor);
+        const f = ZONE * k * LIGHT[i] * (1 - cursor) * ramp;
         VX[i] += way[2] * f; VY[i] += way[3] * f;
-        const over = Math.hypot(VX[i], VY[i]) / (VZONE * k);
-        if (over > 1 && !stirring) { VX[i] /= over; VY[i] /= over; }
         break;
       }
+      if (!held) easing[i] = 0;
     }
     for (let i = 0; i < n; i++) {
       if (clock[i] >= REST) continue;
@@ -200,7 +248,7 @@ function technozenWorld(list, W, H) {
     }
   }
 
-  return { X, Y, VX, VY, R, REST, VMAX, VAPP, VZONE, step, setZones, setBorders: next => { borders = next; }, awake: () => clock.some(c => c < REST) };
+  return { X, Y, VX, VY, R, REST, VMAX, VAPP, VZONE, step, setZones, setBorders: next => { borders = next; }, setCovers: next => { covers = next; }, planDrift, driftStep, DRIFT, awake: () => clock.some(c => c < REST) };
 }
 
   const style = document.getElementById("technozen") || Object.assign(document.createElement("style"), { id: "technozen" });
@@ -240,7 +288,7 @@ function technozenWorld(list, W, H) {
   function startDrops() { if (!window.technozenDropsStop) runDrops().catch(e => { console.warn("[technozen] drops stay painted on the leaf:", e); stopDrops(); }); }
 
   async function runDrops() {
-    let alive = true, raf = 0, timer = 0, resizeTimer = 0, scanTimer = 0, zoneTimer = 0, zoneIdle = 0, last = 0, spare = 0, activeUntil = 0, lastSample = 0, scrolledAt = -1e9;
+    let alive = true, raf = 0, timer = 0, resizeTimer = 0, scanTimer = 0, zoneTimer = 0, zoneIdle = 0, driftTimer = 0, driftTick = 0, busyAt = 0, restless = true, last = 0, spare = 0, activeUntil = 0, lastSample = 0, scrolledAt = -1e9;
     const off = new AbortController(), on = { passive: true, capture: true, signal: off.signal };
     const canvas = Object.assign(document.createElement("canvas"), { id: "technozen-drops" });
     canvas.style.cssText = "position:fixed;inset:0;width:100%;height:100%;z-index:-1;pointer-events:none";
@@ -251,7 +299,7 @@ function technozenWorld(list, W, H) {
     const bounds = { l: 0, t: 0, r: 0, b: 0, s: 1 }, drawnX = new Float64Array(DROPS.drops.length), drawnY = new Float64Array(DROPS.drops.length);
     let io, mo, ro;
     window.technozenDropsStop = () => {
-      alive = false; off.abort(); cancelAnimationFrame(raf); clearTimeout(timer); clearTimeout(resizeTimer); clearTimeout(scanTimer); clearTimeout(zoneTimer);
+      alive = false; off.abort(); cancelAnimationFrame(raf); clearTimeout(timer); clearTimeout(resizeTimer); clearTimeout(scanTimer); clearTimeout(driftTimer); clearInterval(driftTick); clearTimeout(zoneTimer);
       if (io) io.disconnect(); if (mo) mo.disconnect(); if (ro) ro.disconnect();
       canvas.remove(); delete html.dataset.technozenInteractive; window.technozenDropsStop = null;
     };
@@ -297,13 +345,27 @@ function technozenWorld(list, W, H) {
       if (!alive) return;
       spare = Math.min(spare + (now - last) / 1000, 4 / 60); last = now;
       for (; spare >= 1 / 60; spare -= 1 / 60) { world.step(mouse, shapes, bounds); mouse.power *= 0.9; }
-      let moved = 0; // a glide moving a fraction of a pixel costs no drawing
+      drawIfMoved();
+      if (world.awake() || mouse.power > 0.02 || shapes.length) raf = requestAnimationFrame(frame);
+      else if (restless && !driftTick) { clearTimeout(driftTimer); driftTimer = setTimeout(beginDrift, 5000); }
+    }
+    function drawIfMoved() { // a glide moving a fraction of a pixel costs no drawing
+      let moved = 0;
       const ahead = spare * 60;
       for (let i = 0; i < cells.length; i++) moved = Math.max(moved, Math.abs(world.X[i] + world.VX[i] * ahead - drawnX[i]), Math.abs(world.Y[i] + world.VY[i] * ahead - drawnY[i]));
       if (moved * s * dpr > 0.25) draw();
-      if (world.awake() || mouse.power > 0.02 || shapes.length) raf = requestAnimationFrame(frame);
     }
-    function wake() { if (alive && !raf) { last = performance.now(); raf = requestAnimationFrame(frame); } }
+    function wake() { clearTimeout(driftTimer); restless = true; if (alive && !raf) { last = performance.now(); raf = requestAnimationFrame(frame); } }
+    // Once everything has rested for 5 s, crowded drops spread out too slowly to see. It stands still whenever Claude is busy or hidden, and costs nothing once done.
+    function beginDrift() {
+      if (!alive || driftTick || world.awake() || !canvas.isConnected) return;
+      restless = false;
+      if (world.planDrift(bounds)) driftTick = setInterval(() => {
+        if (document.hidden || performance.now() - busyAt < 1500) return;
+        if (!world.driftStep(7.5)) { clearInterval(driftTick); driftTick = 0; }
+        if (!raf) drawIfMoved();
+      }, 125);
+    }
 
     // Only the windows the text sits in push, and only when they themselves move or resize: never the text, never scrolling.
     const SELECTOR = "main,nav,aside,.dframe-sidebar,.dframe-content,.dframe-pane,.dframe-card,[data-cds=Panel],[data-cds=Dialog],[role=dialog],[data-cds-popup],[data-cds=Menu],[data-cds=Popover],[data-cds=ChatComposer]";
@@ -357,13 +419,14 @@ function technozenWorld(list, W, H) {
     function findZones() {
       zoneTimer = 0;
       if (!alive || !canvas.isConnected) return;
-      const hits = new Set(), memo = new Map(), vw = innerWidth, vh = innerHeight, cols = 16, rows = 24;
+      const hits = new Set(), memo = new Map(), vw = innerWidth, vh = innerHeight, cols = 16, rows = 26;
       let cell = 0;
       const probe = idle => { // a few points at a time, only while Claude has nothing else to do
         zoneIdle = 0;
         if (!alive) return;
         do {
-          const el = document.elementFromPoint((cell % cols + 0.5) * vw / cols, (Math.floor(cell / cols) + 0.5) * vh / rows);
+          const row = Math.floor(cell / cols); // two extra rows through the title bar, whose text is too thin and too high for the even grid
+          const el = document.elementFromPoint((cell % cols + 0.5) * vw / cols, row < 2 ? 12 + row * 12 : (row - 2 + 0.5) * vh / (rows - 2));
           const box = el && !panel.contains(el) && !el.closest("button,[role=button]") && (el.closest(TEXT) || (ownText(el) ? el : null));
           if (box && !isCovered(box, memo)) hits.add(box);
           cell++;
@@ -386,10 +449,15 @@ function technozenWorld(list, W, H) {
           }
           boxes.push(z);
         }
+        for (const z of boxes) if (z.y0 < vh * 0.06) z.y0 = -5; // text running up under the top of the window
         const frames = [];
         for (const el of onScreen) if (frames.length < 30 && el.isConnected && !el.matches("main,.dframe-content")) { const r = el.getBoundingClientRect(); frames.push({ x0: (r.left - ox) / s, y0: (r.top - oy) / s, x1: (r.right - ox) / s, y1: (r.bottom - oy) / s }); }
         world.setBorders(frames);
+        const covers = [];
+        for (const el of onScreen) if (covers.length < 30 && el.isConnected && !el.matches("main") && isCovered(el, memo)) { const r = el.getBoundingClientRect(); covers.push({ x0: (r.left - ox) / s, y0: (r.top - oy) / s, x1: (r.right - ox) / s, y1: (r.bottom - oy) / s }); }
+        world.setCovers(covers);
         if (world.setZones(boxes.map(z => ({ x0: (z.x0 - ox) / s, y0: (z.y0 - oy) / s, x1: (z.x1 - ox) / s, y1: (z.y1 - oy) / s })))) wake();
+        else if (restless && !raf && !driftTick) { clearTimeout(driftTimer); driftTimer = setTimeout(beginDrift, 5000); }
       };
       zoneIdle = requestIdleCallback(probe, { timeout: 1000 });
     }
@@ -397,10 +465,10 @@ function technozenWorld(list, W, H) {
     ro = new ResizeObserver(stirUp);
     const scan = () => { scanTimer = 0; if (alive) for (const el of document.body.querySelectorAll(SELECTOR)) watch(el); };
     // New windows are noticed at most once a second, with no work per added node, so a chat switch or a streaming reply costs nothing here.
-    mo = new MutationObserver(() => { if (!scanTimer) scanTimer = setTimeout(scan, 1000); settleZones(); });
+    mo = new MutationObserver(() => { busyAt = performance.now(); if (!scanTimer) scanTimer = setTimeout(scan, 1000); settleZones(); });
     mo.observe(document.body, { childList: true, subtree: true });
     scan();
-    addEventListener("scroll", () => { scrolledAt = performance.now(); settleZones(); }, on);
+    addEventListener("scroll", () => { scrolledAt = busyAt = performance.now(); settleZones(); }, on);
     addEventListener("transitionrun", e => { if (e.target.matches && e.target.matches(SELECTOR)) { watch(e.target); stirUp(); } }, on);
     addEventListener("animationstart", e => { if (e.target.matches && e.target.matches(SELECTOR)) { watch(e.target); stirUp(); } }, on);
     document.addEventListener("visibilitychange", () => { stirUp(); settleZones(); }, { signal: off.signal });

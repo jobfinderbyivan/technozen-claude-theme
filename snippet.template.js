@@ -42,7 +42,7 @@
   function startDrops() { if (!window.technozenDropsStop) runDrops().catch(e => { console.warn("[technozen] drops stay painted on the leaf:", e); stopDrops(); }); }
 
   async function runDrops() {
-    let alive = true, raf = 0, timer = 0, resizeTimer = 0, scanTimer = 0, zoneTimer = 0, zoneIdle = 0, last = 0, spare = 0, activeUntil = 0, lastSample = 0, scrolledAt = -1e9;
+    let alive = true, raf = 0, timer = 0, resizeTimer = 0, scanTimer = 0, zoneTimer = 0, zoneIdle = 0, driftTimer = 0, driftTick = 0, busyAt = 0, restless = true, last = 0, spare = 0, activeUntil = 0, lastSample = 0, scrolledAt = -1e9;
     const off = new AbortController(), on = { passive: true, capture: true, signal: off.signal };
     const canvas = Object.assign(document.createElement("canvas"), { id: "technozen-drops" });
     canvas.style.cssText = "position:fixed;inset:0;width:100%;height:100%;z-index:-1;pointer-events:none";
@@ -53,7 +53,7 @@
     const bounds = { l: 0, t: 0, r: 0, b: 0, s: 1 }, drawnX = new Float64Array(DROPS.drops.length), drawnY = new Float64Array(DROPS.drops.length);
     let io, mo, ro;
     window.technozenDropsStop = () => {
-      alive = false; off.abort(); cancelAnimationFrame(raf); clearTimeout(timer); clearTimeout(resizeTimer); clearTimeout(scanTimer); clearTimeout(zoneTimer);
+      alive = false; off.abort(); cancelAnimationFrame(raf); clearTimeout(timer); clearTimeout(resizeTimer); clearTimeout(scanTimer); clearTimeout(driftTimer); clearInterval(driftTick); clearTimeout(zoneTimer);
       if (io) io.disconnect(); if (mo) mo.disconnect(); if (ro) ro.disconnect();
       canvas.remove(); delete html.dataset.technozenInteractive; window.technozenDropsStop = null;
     };
@@ -99,13 +99,27 @@
       if (!alive) return;
       spare = Math.min(spare + (now - last) / 1000, 4 / 60); last = now;
       for (; spare >= 1 / 60; spare -= 1 / 60) { world.step(mouse, shapes, bounds); mouse.power *= 0.9; }
-      let moved = 0; // a glide moving a fraction of a pixel costs no drawing
+      drawIfMoved();
+      if (world.awake() || mouse.power > 0.02 || shapes.length) raf = requestAnimationFrame(frame);
+      else if (restless && !driftTick) { clearTimeout(driftTimer); driftTimer = setTimeout(beginDrift, 5000); }
+    }
+    function drawIfMoved() { // a glide moving a fraction of a pixel costs no drawing
+      let moved = 0;
       const ahead = spare * 60;
       for (let i = 0; i < cells.length; i++) moved = Math.max(moved, Math.abs(world.X[i] + world.VX[i] * ahead - drawnX[i]), Math.abs(world.Y[i] + world.VY[i] * ahead - drawnY[i]));
       if (moved * s * dpr > 0.25) draw();
-      if (world.awake() || mouse.power > 0.02 || shapes.length) raf = requestAnimationFrame(frame);
     }
-    function wake() { if (alive && !raf) { last = performance.now(); raf = requestAnimationFrame(frame); } }
+    function wake() { clearTimeout(driftTimer); restless = true; if (alive && !raf) { last = performance.now(); raf = requestAnimationFrame(frame); } }
+    // Once everything has rested for 5 s, crowded drops spread out too slowly to see. It stands still whenever Claude is busy or hidden, and costs nothing once done.
+    function beginDrift() {
+      if (!alive || driftTick || world.awake() || !canvas.isConnected) return;
+      restless = false;
+      if (world.planDrift(bounds)) driftTick = setInterval(() => {
+        if (document.hidden || performance.now() - busyAt < 1500) return;
+        if (!world.driftStep(7.5)) { clearInterval(driftTick); driftTick = 0; }
+        if (!raf) drawIfMoved();
+      }, 125);
+    }
 
     // Only the windows the text sits in push, and only when they themselves move or resize: never the text, never scrolling.
     const SELECTOR = "main,nav,aside,.dframe-sidebar,.dframe-content,.dframe-pane,.dframe-card,[data-cds=Panel],[data-cds=Dialog],[role=dialog],[data-cds-popup],[data-cds=Menu],[data-cds=Popover],[data-cds=ChatComposer]";
@@ -159,13 +173,14 @@
     function findZones() {
       zoneTimer = 0;
       if (!alive || !canvas.isConnected) return;
-      const hits = new Set(), memo = new Map(), vw = innerWidth, vh = innerHeight, cols = 16, rows = 24;
+      const hits = new Set(), memo = new Map(), vw = innerWidth, vh = innerHeight, cols = 16, rows = 26;
       let cell = 0;
       const probe = idle => { // a few points at a time, only while Claude has nothing else to do
         zoneIdle = 0;
         if (!alive) return;
         do {
-          const el = document.elementFromPoint((cell % cols + 0.5) * vw / cols, (Math.floor(cell / cols) + 0.5) * vh / rows);
+          const row = Math.floor(cell / cols); // two extra rows through the title bar, whose text is too thin and too high for the even grid
+          const el = document.elementFromPoint((cell % cols + 0.5) * vw / cols, row < 2 ? 12 + row * 12 : (row - 2 + 0.5) * vh / (rows - 2));
           const box = el && !panel.contains(el) && !el.closest("button,[role=button]") && (el.closest(TEXT) || (ownText(el) ? el : null));
           if (box && !isCovered(box, memo)) hits.add(box);
           cell++;
@@ -188,10 +203,15 @@
           }
           boxes.push(z);
         }
+        for (const z of boxes) if (z.y0 < vh * 0.06) z.y0 = -5; // text running up under the top of the window
         const frames = [];
         for (const el of onScreen) if (frames.length < 30 && el.isConnected && !el.matches("main,.dframe-content")) { const r = el.getBoundingClientRect(); frames.push({ x0: (r.left - ox) / s, y0: (r.top - oy) / s, x1: (r.right - ox) / s, y1: (r.bottom - oy) / s }); }
         world.setBorders(frames);
+        const covers = [];
+        for (const el of onScreen) if (covers.length < 30 && el.isConnected && !el.matches("main") && isCovered(el, memo)) { const r = el.getBoundingClientRect(); covers.push({ x0: (r.left - ox) / s, y0: (r.top - oy) / s, x1: (r.right - ox) / s, y1: (r.bottom - oy) / s }); }
+        world.setCovers(covers);
         if (world.setZones(boxes.map(z => ({ x0: (z.x0 - ox) / s, y0: (z.y0 - oy) / s, x1: (z.x1 - ox) / s, y1: (z.y1 - oy) / s })))) wake();
+        else if (restless && !raf && !driftTick) { clearTimeout(driftTimer); driftTimer = setTimeout(beginDrift, 5000); }
       };
       zoneIdle = requestIdleCallback(probe, { timeout: 1000 });
     }
@@ -199,10 +219,10 @@
     ro = new ResizeObserver(stirUp);
     const scan = () => { scanTimer = 0; if (alive) for (const el of document.body.querySelectorAll(SELECTOR)) watch(el); };
     // New windows are noticed at most once a second, with no work per added node, so a chat switch or a streaming reply costs nothing here.
-    mo = new MutationObserver(() => { if (!scanTimer) scanTimer = setTimeout(scan, 1000); settleZones(); });
+    mo = new MutationObserver(() => { busyAt = performance.now(); if (!scanTimer) scanTimer = setTimeout(scan, 1000); settleZones(); });
     mo.observe(document.body, { childList: true, subtree: true });
     scan();
-    addEventListener("scroll", () => { scrolledAt = performance.now(); settleZones(); }, on);
+    addEventListener("scroll", () => { scrolledAt = busyAt = performance.now(); settleZones(); }, on);
     addEventListener("transitionrun", e => { if (e.target.matches && e.target.matches(SELECTOR)) { watch(e.target); stirUp(); } }, on);
     addEventListener("animationstart", e => { if (e.target.matches && e.target.matches(SELECTOR)) { watch(e.target); stirUp(); } }, on);
     document.addEventListener("visibilitychange", () => { stirUp(); settleZones(); }, { signal: off.signal });
