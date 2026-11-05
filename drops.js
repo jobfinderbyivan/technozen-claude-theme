@@ -1,7 +1,7 @@
 // Physics for the Take skin's water drops, with no page access. Lengths are leaf-image units, speeds are units per 1/60 s step.
 // Speed limits are set for the leaf drawn at scale 1.6 (a 2560 wide window) and adjusted by bounds.s, so they hold on screen at any size.
 function technozenWorld(list, W, H) {
-  const REST = 102 * 60, VMAX = 1.2, VAPP = 0.25, MOUSE = 0.009, APP = 0.001, RANGE = 160, MARGIN = 30, CELL = 130, STILL = 1e-4, ENTER = 0.7, VZONE = 0.12, ZONE = 0.0012, RAMP = 120, LONG = 150, TINY = 3, SHRINK = Math.pow(0.9, 1 / 120), DEEP = 12, LEAVE = 0.5, EDGE = 0.995, DRIFT = 300 * 60, DRIFT_REACH = 380, DRIFT_SHARE = 0.7;
+  const REST = 102 * 60, VMAX = 1.2, VAPP = 0.25, MOUSE = 0.009, APP = 0.001, RANGE = 160, MARGIN = 30, CELL = 130, STILL = 1e-4, ENTER = 0.7, VZONE = 0.12, ZONE = 0.0012, RAMP = 120, LONG = 150, TINY = 3, SHRINK = Math.pow(0.9, 1 / 120), DEEP = 12, LEAVE = 0.5, EDGE = 0.995, DRIFT = 300 * 60, DRIFT_REACH = 380, DRIFT_SHARE = 0.7, VHULL = 0.7, HULL = 30, HULL_AGAIN = 90;
   const DRAG = 0.02; // grows with speed, as in water: a hard push dies quickly into a long, faint glide
   const n = list.length, X = new Float64Array(n), Y = new Float64Array(n), VX = new Float64Array(n), VY = new Float64Array(n), R = new Float64Array(n), LIGHT = new Float64Array(n), inside = new Uint8Array(n);
   list.forEach((d, i) => { X[i] = d[0]; Y[i] = d[1]; R[i] = d[2]; LIGHT[i] = Math.max(1.15, Math.min(4, Math.pow(50 / d[2], 1.5))); }); // big drops lean away more slowly, but not much
@@ -12,13 +12,13 @@ function technozenWorld(list, W, H) {
     if (o > 0) painted.set(i * n + j, o);
   }
   const clock = new Int32Array(n).fill(REST); // steps since each drop's own last push: one drop arriving must not keep the rest moving
-  let seed = 12345, zones = [], borders = [], covers = [], drift = [], driftT = 0, pops = [];
+  let seed = 12345, zones = [], borders = [], covers = [], drift = [], driftT = 0, pops = [], splashes = [];
   const lightness = r => Math.max(1.15, Math.min(4, Math.pow(50 / r, 1.5))); // big drops lean away more slowly, but not much
 
   // Past the tiniest size a drop pops. It stays in the lists with no size and far out of the way until it is brought back.
   function pop(i) {
     pops.push({ x: X[i], y: Y[i], r: R[i] });
-    X[i] = Y[i] = -1e5; R[i] = 0; VX[i] = VY[i] = 0; clock[i] = REST; inside[i] = 0; easing[i] = 0; within[i] = 0;
+    X[i] = Y[i] = -1e5; R[i] = 0; VX[i] = VY[i] = 0; clock[i] = REST; inside[i] = 0; easing[i] = 0; within[i] = 0; hull[i] = 0;
   }
   function revive(i, bounds) { // back at full size from outside the window, with the usual long glide in
     R[i] = list[i][2]; LIGHT[i] = lightness(R[i]);
@@ -60,18 +60,37 @@ function technozenWorld(list, W, H) {
     if (u >= 1) drift = [];
     return drift.length > 0;
   }
-  const within = new Uint8Array(n), easing = new Float64Array(n);
+  const within = new Uint8Array(n), easing = new Float64Array(n), hull = new Int32Array(n), HX = new Float64Array(n), HY = new Float64Array(n);
   const inZone = (i, z) => X[i] + R[i] > z.x0 && X[i] - R[i] < z.x1 && Y[i] + R[i] > z.y0 && Y[i] - R[i] < z.y1;
+
+  function exitFrom(i, z, bounds) { // the nearest side of a box that leaves the drop on screen: [room, distance, x, y], or null
+    const sides = [[z.x0 - R[i] - bounds.l, X[i] - z.x0 + R[i], -1, 0], [bounds.r - z.x1 - R[i], z.x1 - X[i] + R[i], 1, 0], [z.y0 - R[i] - bounds.t, Y[i] - z.y0 + R[i], 0, -1], [bounds.b - z.y1 - R[i], z.y1 - Y[i] + R[i], 0, 1]];
+    let way = null;
+    for (const side of sides) if (side[0] >= 0 && (!way || side[1] < way[1])) way = side;
+    return way;
+  }
+  // Text landing on a drop, as a hull meets a bubble on water: pushed out by the nearest side and fanned away from the middle like a bow wave.
+  // The push builds over half a second, then quadratic drag turns it into the long glide. Big drops are heavier.
+  function launch(i, z, bounds) {
+    const way = exitFrom(i, z, bounds), cx = (z.x0 + z.x1) / 2, cy = (z.y0 + z.y1) / 2, fan = (d, half) => 0.4 * Math.max(-1, Math.min(1, d / Math.max(1, half)));
+    const ux = way ? way[2] || fan(X[i] - cx, (z.x1 - z.x0) / 2) : X[i] - cx, uy = way ? way[3] || fan(Y[i] - cy, (z.y1 - z.y0) / 2) : Y[i] - cy, len = Math.max(0.01, Math.hypot(ux, uy));
+    const a = VHULL * (1.6 / (bounds.s || 1.6)) * Math.min(1, LIGHT[i] / 2.5) / HULL / len;
+    HX[i] = ux * a; HY[i] = uy * a; hull[i] = HULL;
+    splashes.push({ x: X[i], y: Y[i], r: R[i] });
+  }
 
   // Text boxes and panels drops should ease out of, {x0, y0, x1, y1}. Only a drop newly caught inside one starts the 102 s,
   // so a box that keeps changing, or a drop with nowhere to go, can never keep them moving. Returns whether they woke.
-  function setZones(next) {
+  // With hullBounds, a newly caught drop also gets a splash, unless it has only just been pushed by anything, so the mouse keeps priority.
+  function setZones(next, hullBounds) {
+    const before = zones;
     zones = next;
+    const deep = (i, z) => X[i] + R[i] - DEEP > z.x0 && X[i] - R[i] + DEEP < z.x1 && Y[i] + R[i] - DEEP > z.y0 && Y[i] - R[i] + DEEP < z.y1;
     let woke = false;
     for (let i = 0; i < n; i++) {
       // A real overlap, so a box shifting a little does not wake a drop resting just clear of it.
-      const caught = zones.some(z => X[i] + R[i] - DEEP > z.x0 && X[i] - R[i] + DEEP < z.x1 && Y[i] + R[i] - DEEP > z.y0 && Y[i] - R[i] + DEEP < z.y1);
-      if (caught && !within[i]) { woke = true; clock[i] = 0; }
+      const caught = zones.find(z => deep(i, z));
+      if (caught && !within[i]) { if (hullBounds && clock[i] > HULL_AGAIN && !before.some(z => deep(i, z))) launch(i, caught, hullBounds); woke = true; clock[i] = 0; } // text already there did not land: the drop glided under it
       within[i] = caught ? 1 : 0;
     }
     return woke;
@@ -101,6 +120,7 @@ function technozenWorld(list, W, H) {
     VX[i] = edge === 0 ? speed : edge === 1 ? -speed : drift;
     VY[i] = edge === 2 ? speed : edge === 3 ? -speed : drift;
     inside[i] = 2; // on its way in
+    hull[i] = 0;
     for (const key of painted.keys()) if (Math.floor(key / n) === i || key % n === i) painted.delete(key);
     clock[i] = 0;
   }
@@ -156,6 +176,7 @@ function technozenWorld(list, W, H) {
             const f = MOUSE * k * LIGHT[i] * mouse.power * near * near;
             VX[i] += dx / d * f + mouse.vx * f * 0.01; VY[i] += dy / d * f + mouse.vy * f * 0.01;
             clock[i] = -1;
+            hull[i] = 0; // the mouse takes over from a splash at once
           }
         }
       }
@@ -190,9 +211,7 @@ function technozenWorld(list, W, H) {
       for (const z of zones) {
         if (!inZone(i, z)) continue;
         held = true;
-        const sides = [[z.x0 - R[i] - bounds.l, X[i] - z.x0 + R[i], -1, 0], [bounds.r - z.x1 - R[i], z.x1 - X[i] + R[i], 1, 0], [z.y0 - R[i] - bounds.t, Y[i] - z.y0 + R[i], 0, -1], [bounds.b - z.y1 - R[i], z.y1 - Y[i] + R[i], 0, 1]];
-        let way = null;
-        for (const side of sides) if (side[0] >= 0 && (!way || side[1] < way[1])) way = side;
+        const way = exitFrom(i, z, bounds);
         if (!way || way[1] > LONG) { // a long way out from under the text: it shrinks 10% every 2 s as it goes, and past the tiniest size it pops
           R[i] *= SHRINK; LIGHT[i] = lightness(R[i]);
           if (R[i] < TINY) { pop(i); break; }
@@ -211,6 +230,7 @@ function technozenWorld(list, W, H) {
     }
     for (let i = 0; i < n; i++) {
       if (clock[i] >= REST) continue;
+      if (hull[i]) { hull[i]--; VX[i] += HX[i]; VY[i] += HY[i]; }
       const left = 1 - clock[i] / REST, cap = vmax * left * left; // smooth to the end, no visible stop
       let v = Math.hypot(VX[i], VY[i]);
       const slow = Math.min(1 - DRAG * v / k, v > cap ? cap / v : 1);
@@ -239,6 +259,49 @@ function technozenWorld(list, W, H) {
     }
   }
 
-  return { X, Y, VX, VY, R, REST, VMAX, VAPP, VZONE, step, setZones, setBorders: next => { borders = next; }, setCovers: next => { covers = next; }, planDrift, driftStep, DRIFT, revive, takePops: () => { const p = pops; pops = []; return p; }, awake: () => clock.some(c => c < REST) };
+  return { X, Y, VX, VY, R, REST, VMAX, VAPP, VZONE, step, setZones, setBorders: next => { borders = next; }, setCovers: next => { covers = next; }, planDrift, driftStep, DRIFT, revive, takePops: () => { const p = pops; pops = []; return p; }, takeSplashes: () => { const p = splashes; splashes = []; return p; }, awake: () => clock.some(c => c < REST) };
 }
-if (typeof module !== "undefined") module.exports = technozenWorld;
+
+// Zen Click: the start-up card's scale and bell, one bell per click. A click while another still rings takes a note that sounds well with it (never a second or a seventh).
+const BELL_SCALE = [1, 9 / 8, 5 / 4, 3 / 2, 5 / 3, 2, 9 / 4, 5 / 2, 3], BELL_SWEET = [6 / 5, 5 / 4, 4 / 3, 3 / 2, 8 / 5, 5 / 3, 2, 5 / 2, 8 / 3, 3];
+function technozenBellNote(last, ringing, rnd) {
+  const sweet = (a, b) => { const r = Math.max(a, b) / Math.min(a, b); return BELL_SWEET.some(x => Math.abs(x - r) < 0.001); };
+  const notes = BELL_SCALE.map((_, i) => i).filter(i => i !== last && (!ringing || sweet(BELL_SCALE[i], BELL_SCALE[last])));
+  return notes[Math.floor(rnd() * notes.length)];
+}
+// level 0..1 sets both loudness and length. Returns ring(level, time), which returns when the last bell ends.
+// A lone bell is the same in both ears. A second click while it rings makes a true binaural beat: 4 to 7 Hz between the ears in the new bell,
+// the ringing bell's right ear glides to the same split, and both last 35% longer. Left and right never mix, so the beat exists only in the listener's head.
+function technozenBells(ctx) {
+  const RATIO = [1, 2, 2.76, 4.07], AMP = [1, 0.5, 0.25, 0.12], TAU = [2, 1.4, 0.9, 0.6], LONGER = 1.35, MAX = 12, base = 180 + Math.random() * 40;
+  const out = ctx.createDynamicsCompressor(); // many clicks at once must never distort
+  out.threshold.value = -9; out.knee.value = 6; out.ratio.value = 20; out.attack.value = 0.002; out.release.value = 0.25;
+  const trim = ctx.createGain(); trim.gain.value = 0.9; // the compressor can overshoot a little on a sudden hit
+  out.connect(trim); trim.connect(ctx.destination);
+  let last = -1, ringsUntil = -1e9, rung = [];
+  const stopAt = (b, t) => { b.end = t; for (const p of b.parts) { p.l.stop(t); p.r.stop(t); } };
+  const fade = (b, t, length) => { b.parts.forEach((p, k) => { p.gain.gain.cancelAndHoldAtTime(t); p.gain.gain.setTargetAtTime(0, t, TAU[k] * length); }); };
+  return (level, t) => {
+    const ringing = t < ringsUntil, note = technozenBellNote(last, ringing, Math.random), beat = ringing ? 4 + Math.random() * 3 : 0;
+    const f = base * BELL_SCALE[note], loud = (0.02 + 0.6 * level * level) / 1.87, length = (0.4 + 1.2 * level) * (ringing ? LONGER : 1);
+    rung = rung.filter(b => b.end > t);
+    if (ringing) for (const b of rung) if (!b.split) {
+      b.split = true; b.length *= LONGER;
+      b.parts.forEach((p, k) => p.r.frequency.setTargetAtTime(b.f * RATIO[k] + beat, t, 0.05));
+      fade(b, t, b.length); stopAt(b, t + 6 * 2 * b.length);
+    }
+    if (rung.length >= MAX) { const b = rung.shift(); fade(b, t, 0.02 / 2); stopAt(b, t + 0.1); }
+    const b = { f, split: ringing, length, end: 0, parts: RATIO.map((ratio, k) => {
+      const l = ctx.createOscillator(), r = ctx.createOscillator(), join = ctx.createChannelMerger(2), gain = ctx.createGain();
+      l.frequency.value = f * ratio; r.frequency.value = f * ratio + beat;
+      l.connect(join, 0, 0); r.connect(join, 0, 1); join.connect(gain); gain.connect(out);
+      gain.gain.setValueAtTime(0, t); gain.gain.linearRampToValueAtTime(AMP[k] * loud, t + 0.015); gain.gain.setTargetAtTime(0, t + 0.015, TAU[k] * length);
+      l.start(t); r.start(t);
+      return { l, r, gain };
+    }) };
+    stopAt(b, t + 6 * 2 * length);
+    rung.push(b); last = note; ringsUntil = Math.max(ringsUntil, t + 4.6 * length); // until it is 20 dB down
+    return Math.max(...rung.map(x => x.end));
+  };
+}
+if (typeof module !== "undefined") { module.exports = technozenWorld; module.exports.bellNote = technozenBellNote; module.exports.BELL_SCALE = BELL_SCALE; }

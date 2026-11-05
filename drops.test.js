@@ -408,6 +408,52 @@ const NONE = stir(-1e6, -1e6, 0);
   t2.driftStep(7.5);
   assert(t2.X[held] === hx && t2.Y[held] === hy, "a touched drop kept being placed");
 }
+{ // Splash: text landing pushes a drop away like a hull on water, a quick start at a realistic speed. Gentle stays as it was.
+  const box = { x0: 780, y0: 100, x1: 1600, y1: 900 }, one = (x, y, r) => world([[x, y, r]], W, H), top = w => { let p = 0; for (let t = 0; t < 120; t++) { w.step(NONE, [], BOUNDS); p = Math.max(p, speed(w)); } return p; };
+  const gentle = one(800, 500, 15); gentle.setZones([box]);
+  assert(gentle.takeSplashes().length === 0, "gentle made a splash");
+  const small = one(800, 500, 15); small.setZones([box], BOUNDS);
+  assert(small.takeSplashes().length === 1 && small.takeSplashes().length === 0, "one landing, one splash");
+  small.step(NONE, [], BOUNDS);
+  assert(speed(small) < 0.03, "a splash must build, not jump: " + speed(small));
+  const x0 = small.X[0], peak = top(small), px = peak * 60 * 1.6;
+  assert(small.X[0] < x0 - 20, "pushed the wrong way, or too little: " + (small.X[0] - x0));
+  assert(px > 30 && px <= 67, "water speed is 30 to 67 px/s, got " + px.toFixed(0));
+  assert(peak > 3 * top(gentle), "splash " + peak + " is hardly quicker than gentle");
+  const big = one(800, 500, 50); big.setZones([box], BOUNDS);
+  assert(top(big) < 0.75 * peak, "big drops are heavier");
+  const fan = y => { const w = one(800, y, 15); w.setZones([box], BOUNDS); top(w); return w.Y[0] - y; };
+  assert(fan(300) < -1 && fan(700) > 1, "no bow wave fan: " + fan(300) + ", " + fan(700));
+  const stay = one(800, 500, 15); stay.setZones([box]); stay.setZones([box], BOUNDS);
+  assert(stay.takeSplashes().length === 0, "text that was already there has not landed");
+  const flick = one(800, 500, 15); flick.setZones([box], BOUNDS); flick.step(NONE, [], BOUNDS); flick.setZones([], BOUNDS); flick.step(NONE, [], BOUNDS); flick.setZones([box], BOUNDS);
+  assert(flick.takeSplashes().length === 1, "a box flickering must not splash again");
+  const rest = one(800, 500, 15); rest.setZones([box], BOUNDS); rest.setZones([], BOUNDS);
+  for (let t = 0; t < rest.REST + 2; t++) rest.step(NONE, [], BOUNDS);
+  assert(!rest.awake() && speed(rest) === 0, "a splash still rests at 102 s");
+  const moused = one(800, 500, 15), free = one(800, 500, 15); moused.setZones([box], BOUNDS); free.setZones([box], BOUNDS);
+  moused.step(stir(900, 500), [], BOUNDS); free.step(NONE, [], BOUNDS);
+  for (let t = 0; t < 29; t++) { moused.step(NONE, [], BOUNDS); free.step(NONE, [], BOUNDS); }
+  assert(speed(moused) < 0.7 * speed(free), "the mouse must take over from a splash: " + speed(moused) + " vs " + speed(free));
+  const glide = one(600, 500, 15); glide.setZones([box], BOUNDS); glide.takeSplashes();
+  glide.X[0] = 800; // it moved under the text by itself; the text stayed where it was
+  glide.setZones([box], BOUNDS);
+  assert(glide.takeSplashes().length === 0, "a drop gliding under still text is not text landing on it");
+  const held = one(800, 500, 15); held.step(stir(900, 500), [], BOUNDS); held.setZones([box], BOUNDS);
+  assert(held.takeSplashes().length === 0, "a drop under the moving mouse does not splash");
+}
+{ // Zen Click notes: always a different note. A note taken while another rings is a sweet interval from it, never a second or a seventh, and every note has several to choose from.
+  const SCALE = world.BELL_SCALE, sour = [9 / 8, 10 / 9, 9 / 5, 15 / 8, 16 / 9, 20 / 9, 40 / 27, 9 / 4, 27 / 10];
+  for (let last = 0; last < SCALE.length; last++) {
+    const seen = new Set(), free = new Set();
+    for (let u = 0; u < 1; u += 0.002) { seen.add(world.bellNote(last, true, () => u)); free.add(world.bellNote(last, false, () => u)); }
+    assert(!seen.has(last) && !free.has(last), "the same note twice");
+    assert(seen.size >= 2, "note " + last + " has only " + seen.size + " sweet partners");
+    assert(free.size === SCALE.length - 1, "a lone click should reach every other note: " + free.size);
+    for (const i of seen) { const r = Math.max(SCALE[i], SCALE[last]) / Math.min(SCALE[i], SCALE[last]); assert(!sour.some(x => Math.abs(x - r) < 0.001), "sour interval " + r); }
+  }
+  assert(world.bellNote(-1, false, () => 0.5) >= 0, "the first click has a note");
+}
 { // A long way out from under text: 10% smaller every 2 s. Near the edge of the text: no shrinking at all.
   const w = world([[800, 500, 40]], W, H); w.setZones([{ x0: 200, y0: 0, x1: 1400, y1: 1000 }]);
   for (let t = 0; t < 120; t++) w.step(NONE, [], BOUNDS);

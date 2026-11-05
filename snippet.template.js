@@ -5,6 +5,7 @@
   const DROPS = __DROPS__;
   const html = document.documentElement;
   // __PHYSICS__
+  let splashOn = false, rippleOn = true, zenOn = false, bellLevel = 0.5; // the panel's choices, kept current by sync()
   const style = document.getElementById("technozen") || Object.assign(document.createElement("style"), { id: "technozen" });
 
   function apply(slug) {
@@ -25,9 +26,29 @@
     sync();
   }
 
+  // Zen Click: nothing runs and no sound device is held until a click, and the sound device is let go when the last bell has ended.
+  let ring = null, hush = 0, ringEnd = 0;
+  function bell() {
+    const ctx = window.technozenAudio || (window.technozenAudio = new AudioContext());
+    ring = ring || technozenBells(ctx);
+    ctx.resume();
+    ringEnd = ring(bellLevel, ctx.currentTime + 0.005);
+    clearTimeout(hush); hush = setTimeout(() => ctx.suspend(), (ringEnd - ctx.currentTime) * 1000 + 200);
+  }
+  if (window.technozenClick) for (const type of ["pointerdown", "mousedown"]) removeEventListener(type, window.technozenClick, true);
+  // A second button pressed while another is held fires no pointerdown, only mousedown. The slider rings when let go instead, at its new setting.
+  window.technozenClick = e => { if (zenOn && (e.type === "pointerdown" || e.buttons & (e.buttons - 1)) && !(e.target.closest && e.target.closest(".tz-bell"))) bell(); };
+  for (const type of ["pointerdown", "mousedown"]) addEventListener(type, window.technozenClick, true);
+
   function remove() {
     const ours = THEMES[html.dataset.technozen];
     stopDrops();
+    zenOn = false; clearTimeout(hush);
+    if (window.technozenAudio) { // what is ringing rings out, as it does when the start-up card closes
+      const ctx = window.technozenAudio;
+      setTimeout(() => ctx.close(), Math.max(0, ringEnd - ctx.currentTime) * 1000 + 200);
+      window.technozenAudio = null; ring = null;
+    }
     style.remove();
     panel.remove();
     delete html.dataset.technozen;
@@ -51,7 +72,7 @@
     const mouse = { x: -1e6, y: -1e6, vx: 0, vy: 0, power: 0 };
     let shapes = [], s = 1, ox = 0, oy = 0, dpr = 1, mx = 0, my = 0, mt = 0;
     const bounds = { l: 0, t: 0, r: 0, b: 0, s: 1 }, drawnX = new Float64Array(DROPS.drops.length), drawnY = new Float64Array(DROPS.drops.length), drawnR = new Float64Array(DROPS.drops.length);
-    let bursts = []; const returning = new Set(), revivals = new Set();
+    let bursts = [], ripples = [], zonesKnown = false; const returning = new Set(), revivals = new Set();
     let io, mo, ro;
     window.technozenDropsStop = () => {
       alive = false; off.abort(); cancelAnimationFrame(raf); clearTimeout(timer); clearTimeout(resizeTimer); clearTimeout(scanTimer); clearTimeout(driftTimer); clearInterval(driftTick); revivals.forEach(clearTimeout); clearTimeout(zoneTimer);
@@ -103,6 +124,15 @@
         ctx.beginPath(); ctx.arc(x, y, reach, 0, 6.3); ctx.stroke();
         for (let a = 0; a < 6; a++) { ctx.beginPath(); ctx.arc(x + Math.cos(a * 1.05) * reach * 1.3, y + Math.sin(a * 1.05) * reach * 1.3, 1.1 * dpr, 0, 6.3); ctx.fill(); }
       }
+      ripples = ripples.filter(r => now - r.t < 1400);
+      for (const r of ripples) for (let w = 0; w < 3; w++) { // rings leaving a splash one after another, slowing as they spread: a light crest with a dark trough behind it
+        const u = (now - r.t - w * 200) / (1400 - w * 200);
+        if (u <= 0) continue;
+        const reach = (r.r + 70 * (1 - (1 - u) * (1 - u))) * s * dpr, x = (ox + r.x * s) * dpr, y = (oy + r.y * s) * dpr, fade = (1 - u) * (1 - u);
+        ctx.lineWidth = 1.2 * dpr;
+        ctx.globalAlpha = 0.6 * fade; ctx.strokeStyle = "#fff"; ctx.beginPath(); ctx.arc(x, y, reach, 0, 6.3); ctx.stroke();
+        ctx.globalAlpha = 0.25 * fade; ctx.strokeStyle = "#032"; ctx.beginPath(); ctx.arc(x, y, reach + 1.5 * dpr, 0, 6.3); ctx.stroke();
+      }
       ctx.globalAlpha = 1;
     }
     function frame(now) {
@@ -118,8 +148,9 @@
           returning.add(i); revivals.add(back);
         }
       }
-      if (bursts.length) draw(); else drawIfMoved();
-      if (world.awake() || mouse.power > 0.02 || shapes.length || bursts.length) raf = requestAnimationFrame(frame);
+      for (const p of world.takeSplashes()) if (rippleOn) ripples.push({ x: p.x, y: p.y, r: p.r, t: now });
+      if (bursts.length || ripples.length) draw(); else drawIfMoved();
+      if (world.awake() || mouse.power > 0.02 || shapes.length || bursts.length || ripples.length) raf = requestAnimationFrame(frame);
       else if (restless && !driftTick) { clearTimeout(driftTimer); driftTimer = setTimeout(beginDrift, 5000); }
     }
     function drawIfMoved() { // a glide moving a fraction of a pixel costs no drawing
@@ -229,7 +260,9 @@
         const covers = [];
         for (const el of onScreen) if (covers.length < 30 && el.isConnected && !el.matches("main") && isCovered(el, memo)) { const r = el.getBoundingClientRect(); covers.push({ x0: (r.left - ox) / s, y0: (r.top - oy) / s, x1: (r.right - ox) / s, y1: (r.bottom - oy) / s }); }
         world.setCovers(covers);
-        if (world.setZones(boxes.map(z => ({ x0: (z.x0 - ox) / s, y0: (z.y0 - oy) / s, x1: (z.x1 - ox) / s, y1: (z.y1 - oy) / s })))) wake();
+        const woke = world.setZones(boxes.map(z => ({ x0: (z.x0 - ox) / s, y0: (z.y0 - oy) / s, x1: (z.x1 - ox) / s, y1: (z.y1 - oy) / s })), splashOn && zonesKnown ? bounds : null); // the text already there at the start has not landed
+        zonesKnown = true;
+        if (woke) wake();
         else if (restless && !raf && !driftTick) { clearTimeout(driftTimer); driftTimer = setTimeout(beginDrift, 5000); }
         if (zonesStale) { zonesStale = false; settleZones(300); }
       };
@@ -239,10 +272,10 @@
     ro = new ResizeObserver(stirUp);
     const scan = () => { scanTimer = 0; if (alive) for (const el of document.body.querySelectorAll(SELECTOR)) watch(el); };
     // New windows are noticed at most once a second, with no work per added node, so a chat switch or a streaming reply costs nothing here.
-    mo = new MutationObserver(() => { busyAt = performance.now(); if (!scanTimer) scanTimer = setTimeout(scan, 1000); settleZones(800); });
+    mo = new MutationObserver(() => { busyAt = performance.now(); if (!scanTimer) scanTimer = setTimeout(scan, 1000); settleZones(splashOn ? 300 : 800); });
     mo.observe(document.body, { childList: true, subtree: true });
     scan();
-    addEventListener("scroll", () => { scrolledAt = busyAt = performance.now(); settleZones(300); }, on);
+    addEventListener("scroll", () => { scrolledAt = busyAt = performance.now(); settleZones(splashOn ? 150 : 300); }, on);
     addEventListener("transitionrun", e => { if (e.target.matches && e.target.matches(SELECTOR)) { watch(e.target); stirUp(); } }, on);
     addEventListener("animationstart", e => { if (e.target.matches && e.target.matches(SELECTOR)) { watch(e.target); stirUp(); } }, on);
     document.addEventListener("visibilitychange", () => { stirUp(); settleZones(300); }, { signal: off.signal });
@@ -286,19 +319,41 @@
     #technozen-panel .tz-swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--cds-text-primary, #222); }
     #technozen-panel label { display: flex; align-items: center; gap: 4px; cursor: pointer; user-select: none; }
     #technozen-panel .tz-live-label[data-off] { opacity: 0.5; cursor: default; }
+    #technozen-panel .tz-dis[disabled] { opacity: 0.5; cursor: default; }
+    #technozen-panel .tz-menu { inset: auto; margin: 0; padding: 8px 12px; border: 0; border-radius: 12px; color: inherit; font: inherit;
+      background: var(--cds-surface-popover, #fff); box-shadow: 0 0 0 1px var(--cds-border, #0002), 0 8px 24px #0003; }
+    #technozen-panel .tz-menu label { padding: 3px 0; }
+    #technozen-panel .tz-sub { padding-left: 20px; }
+    #technozen-panel .tz-sub[data-off] { opacity: 0.5; }
+    #technozen-panel .tz-bell { width: 80px; margin: 0; cursor: pointer; }
+    #technozen-panel .tz-bell[disabled] { opacity: 0.5; cursor: default; }
     #technozen-panel .tz-remove { padding: 0 6px; opacity: 0.7; } #technozen-panel .tz-remove:hover { opacity: 1; }
     #technozen-panel .tz-fold { width: 22px; height: 22px; border-radius: 50%; text-align: center; line-height: 22px; background: var(--cds-fill-secondary, #0001); }
   </style>` + ORDER.map(s => `<button class="tz-swatch" data-theme="${s}" title="${THEMES[s].name}" style="background: linear-gradient(135deg, ${THEMES[s].bg} 45%, ${THEMES[s].accent} 55%)"></button>`).join("")
     + `<label title="Full skin on, or colors only"><input type="checkbox" class="tz-skin"> skin</label>`
     + `<label class="tz-live-label"><input type="checkbox" class="tz-live"> interactive</label>`
+    + `<button class="tz-dis" popovertarget="tz-disruption" title="What text does when it lands on a drop">text bubble disruption ▴</button>`
+    + `<div class="tz-menu" id="tz-disruption" popover><label title="Drops ease slowly out from under text"><input type="radio" name="tz-mode" value="gentle"> Gentle</label><label title="Text landing on a drop pushes it away like a boat hull on water"><input type="radio" name="tz-mode" value="splash"> Splash</label>`
+    + `<div class="tz-sub"><label><input type="radio" name="tz-ripple" value="on"> Ripple</label><label><input type="radio" name="tz-ripple" value="off"> No ripple</label></div></div>`
+    + `<label title="Every click rings a bell. A click while another still rings makes a binaural beat, best on headphones"><input type="checkbox" class="tz-zen"> Zen Click</label>`
+    + `<input type="range" class="tz-bell" min="0" max="100" aria-label="Bell volume and length" title="Bell volume and length">`
     + `<button class="tz-remove" title="Remove Technozen (Ctrl+Alt+0)">×</button><button class="tz-fold" title="Fold the panel">◐</button>`;
   if (localStorage.getItem("technozen-panel") === "folded") panel.dataset.folded = "";
+  panel.querySelector(".tz-bell").onchange = e => { localStorage.setItem("technozen-bell", e.target.value); sync(); bell(); }; // let go of the slider to hear the new setting
+  panel.querySelector(".tz-menu").onbeforetoggle = e => { // the drop-up opens above its button
+    if (e.newState !== "open") return;
+    const r = panel.querySelector(".tz-dis").getBoundingClientRect();
+    e.target.style.right = innerWidth - r.right + "px"; e.target.style.bottom = innerHeight - r.top + 12 + "px";
+  };
   panel.onclick = e => {
     const b = e.target.closest("button, input");
     if (!b) return;
     if (b.dataset.theme) apply(b.dataset.theme);
     else if (b.classList.contains("tz-skin")) skin(b.checked);
     else if (b.classList.contains("tz-live")) { localStorage.setItem("technozen-interactive", b.checked ? "on" : "off"); sync(); }
+    else if (b.name === "tz-mode") { localStorage.setItem("technozen-disruption", b.value); sync(); }
+    else if (b.name === "tz-ripple") { localStorage.setItem("technozen-ripple", b.value); sync(); }
+    else if (b.classList.contains("tz-zen")) { localStorage.setItem("technozen-zenclick", b.checked ? "on" : "off"); sync(); }
     else if (b.classList.contains("tz-remove")) remove();
     else if (b.classList.contains("tz-fold")) {
       panel.toggleAttribute("data-folded");
@@ -316,6 +371,15 @@
     box.disabled = !possible; box.checked = wanted;
     label.toggleAttribute("data-off", !possible);
     label.title = possible ? "Drops move with the mouse and the app, or stay painted on the leaf" : "Only the Take theme with its full skin has drops";
+    splashOn = localStorage.getItem("technozen-disruption") === "splash"; rippleOn = localStorage.getItem("technozen-ripple") !== "off";
+    panel.querySelector(`[name=tz-mode][value=${splashOn ? "splash" : "gentle"}]`).checked = true;
+    panel.querySelector(`[name=tz-ripple][value=${rippleOn ? "on" : "off"}]`).checked = true;
+    panel.querySelector(".tz-dis").disabled = !possible || !wanted;
+    panel.querySelector(".tz-sub").toggleAttribute("data-off", !splashOn);
+    panel.querySelectorAll("[name=tz-ripple]").forEach(b => { b.disabled = !splashOn; });
+    zenOn = localStorage.getItem("technozen-zenclick") === "on"; bellLevel = Number(localStorage.getItem("technozen-bell") || 50) / 100;
+    panel.querySelector(".tz-zen").checked = zenOn;
+    panel.querySelector(".tz-bell").value = bellLevel * 100; panel.querySelector(".tz-bell").disabled = !zenOn;
     if (possible && wanted) startDrops(); else stopDrops();
   }
 
