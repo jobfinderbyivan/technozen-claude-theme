@@ -7,7 +7,7 @@
   // Physics for the Take skin's water drops, with no page access. Lengths are leaf-image units, speeds are units per 1/60 s step.
 // Speed limits are set for the leaf drawn at scale 1.6 (a 2560 wide window) and adjusted by bounds.s, so they hold on screen at any size.
 function technozenWorld(list, W, H) {
-  const REST = 102 * 60, VMAX = 1.2, VAPP = 0.35, MOUSE = 0.009, APP = 0.004, RANGE = 160, MARGIN = 30, CELL = 130, STILL = 1e-4, ENTER = 0.7, VZONE = 0.25, ZONE = 0.003, DEEP = 12, LEAVE = 0.5;
+  const REST = 102 * 60, VMAX = 1.2, VAPP = 0.35, MOUSE = 0.009, APP = 0.004, RANGE = 160, MARGIN = 30, CELL = 130, STILL = 1e-4, ENTER = 0.7, VZONE = 0.25, ZONE = 0.003, DEEP = 12, LEAVE = 0.5, EDGE = 0.995;
   const DRAG = 0.02; // grows with speed, as in water: a hard push dies quickly into a long, faint glide
   const n = list.length, X = new Float64Array(n), Y = new Float64Array(n), VX = new Float64Array(n), VY = new Float64Array(n), R = new Float64Array(n), LIGHT = new Float64Array(n), inside = new Uint8Array(n);
   list.forEach((d, i) => { X[i] = d[0]; Y[i] = d[1]; R[i] = d[2]; LIGHT[i] = Math.min(4, Math.pow(50 / d[2], 1.5)); }); // big drops lean away slowly
@@ -18,7 +18,7 @@ function technozenWorld(list, W, H) {
     if (o > 0) painted.set(i * n + j, o);
   }
   const clock = new Int32Array(n).fill(REST); // steps since each drop's own last push: one drop arriving must not keep the rest moving
-  let seed = 12345, zones = [];
+  let seed = 12345, zones = [], borders = [];
   const within = new Uint8Array(n);
   const inZone = (i, z) => X[i] + R[i] > z.x0 && X[i] - R[i] < z.x1 && Y[i] + R[i] > z.y0 && Y[i] - R[i] < z.y1;
 
@@ -176,6 +176,10 @@ function technozenWorld(list, W, H) {
           continue;
         }
       }
+      if (v > STILL) for (const b of borders) { // a window's edge is only a little harder to cross
+        const r = R[i], rowOn = Y[i] > b.y0 - r && Y[i] < b.y1 + r, columnOn = X[i] > b.x0 - r && X[i] < b.x1 + r;
+        if ((rowOn && (Math.abs(X[i] - b.x0) < r || Math.abs(X[i] - b.x1) < r)) || (columnOn && (Math.abs(Y[i] - b.y0) < r || Math.abs(Y[i] - b.y1) < r))) { VX[i] *= EDGE; VY[i] *= EDGE; v *= EDGE; break; }
+      }
       if (v <= STILL) continue;
       X[i] += VX[i]; Y[i] += VY[i];
       if (X[i] > bounds.l && X[i] < bounds.r && Y[i] > bounds.t && Y[i] < bounds.b) inside[i] = 1;
@@ -186,7 +190,7 @@ function technozenWorld(list, W, H) {
     }
   }
 
-  return { X, Y, VX, VY, R, REST, VMAX, VAPP, VZONE, step, setZones, awake: () => clock.some(c => c < REST) };
+  return { X, Y, VX, VY, R, REST, VMAX, VAPP, VZONE, step, setZones, setBorders: next => { borders = next; }, awake: () => clock.some(c => c < REST) };
 }
 
   const style = document.getElementById("technozen") || Object.assign(document.createElement("style"), { id: "technozen" });
@@ -323,27 +327,45 @@ function technozenWorld(list, W, H) {
       if (moving.length) wake();
       if (now < activeUntil) schedule(); else shapes = [];
     }
-    // Text boxes and panels the drops ease out of. Found by probing a grid of points, so a huge transcript costs the same as a small one,
-    // and only once the page has been quiet for a second, so nothing runs while Claude is busy loading a chat.
-    const TEXT = "p,li,pre,h1,h2,h3,h4,blockquote,table,[data-cds=UserMessage],.ProseMirror,nav,aside,.dframe-sidebar,[data-cds=Panel],[data-cds=Dialog],[role=dialog],[data-cds-popup],[data-cds=ChatComposer]";
+    // Text sitting directly on the leaf, which drops ease away from. Found by probing a grid of points, so a huge transcript costs the same
+    // as a small one, and only once the page has been quiet for a second, so nothing runs while Claude is busy loading a chat.
+    const TEXT = "p,li,pre,h1,h2,h3,h4,blockquote,table";
+    const ownText = el => { for (const n of el.childNodes) if (n.nodeType === 3 && n.nodeValue.trim()) return true; return false; };
+    // Inside anything with a visible background the text has its own cover, so drops may rest under it. The chat column's faint wash is not a window.
+    function isCovered(el, memo) {
+      for (let n = el; n && n !== document.body && !n.matches("main"); n = n.parentElement) {
+        let solid = memo.get(n);
+        if (solid === undefined) {
+          const c = getComputedStyle(n);
+          solid = !/^(transparent|rgba\(\d+, \d+, \d+, 0\))$/.test(c.backgroundColor) || c.backgroundImage !== "none" || c.backdropFilter !== "none";
+          memo.set(n, solid);
+        }
+        if (solid) return true;
+      }
+      return false;
+    }
     function findZones() {
       zoneTimer = 0;
       if (!alive || !canvas.isConnected) return;
-      const hits = new Set(), vw = innerWidth, vh = innerHeight, cols = 16, rows = 10;
+      const hits = new Set(), memo = new Map(), vw = innerWidth, vh = innerHeight, cols = 16, rows = 24;
       let cell = 0;
       const probe = idle => { // a few points at a time, only while Claude has nothing else to do
         zoneIdle = 0;
         if (!alive) return;
         do {
           const el = document.elementFromPoint((cell % cols + 0.5) * vw / cols, (Math.floor(cell / cols) + 0.5) * vh / rows);
-          const box = el && !panel.contains(el) && el.closest(TEXT);
-          if (box) hits.add(box);
+          const box = el && !panel.contains(el) && !el.closest("button,[role=button]") && (el.closest(TEXT) || (ownText(el) ? el : null));
+          if (box && !isCovered(box, memo)) hits.add(box);
           cell++;
         } while (cell < cols * rows && idle.timeRemaining() > 1);
         if (cell < cols * rows) { zoneIdle = requestIdleCallback(probe, { timeout: 1000 }); return; }
-        const boxes = [], gap = vh / rows * 1.1;
+        const range = document.createRange(), boxes = [], gap = vh * 0.2; // the grid can land between lines, so strips of one column are joined across a few rows
         for (const el of hits) {
-          const r = el.getBoundingClientRect();
+          // A short block is one message, whichever of its lines the grid landed on. A long one is a column, joined below.
+          const up = el.parentElement, block = up && up !== document.body && !up.matches("main") && !isCovered(up, memo) ? up.getBoundingClientRect() : null;
+          range.selectNodeContents(block && block.height <= vh * 0.35 && block.width <= vw * 0.6 ? up : el); // the words themselves, not the width of the pane they sit in
+          const r = range.getBoundingClientRect();
+          if (!r.width || !r.height) continue;
           let z = { x0: r.left, y0: r.top, x1: r.right, y1: r.bottom };
           for (let i = boxes.length - 1; i >= 0; i--) { // lines of one column become one box
             const b = boxes[i], sharedWidth = Math.min(z.x1, b.x1) - Math.max(z.x0, b.x0);
@@ -354,6 +376,9 @@ function technozenWorld(list, W, H) {
           }
           boxes.push(z);
         }
+        const frames = [];
+        for (const el of onScreen) if (frames.length < 30 && el.isConnected && !el.matches("main,.dframe-content")) { const r = el.getBoundingClientRect(); frames.push({ x0: (r.left - ox) / s, y0: (r.top - oy) / s, x1: (r.right - ox) / s, y1: (r.bottom - oy) / s }); }
+        world.setBorders(frames);
         if (world.setZones(boxes.map(z => ({ x0: (z.x0 - ox) / s, y0: (z.y0 - oy) / s, x1: (z.x1 - ox) / s, y1: (z.y1 - oy) / s })))) wake();
       };
       zoneIdle = requestIdleCallback(probe, { timeout: 1000 });

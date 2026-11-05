@@ -1,7 +1,7 @@
 // Physics for the Take skin's water drops, with no page access. Lengths are leaf-image units, speeds are units per 1/60 s step.
 // Speed limits are set for the leaf drawn at scale 1.6 (a 2560 wide window) and adjusted by bounds.s, so they hold on screen at any size.
 function technozenWorld(list, W, H) {
-  const REST = 102 * 60, VMAX = 1.2, VAPP = 0.35, MOUSE = 0.009, APP = 0.004, RANGE = 160, MARGIN = 30, CELL = 130, STILL = 1e-4, ENTER = 0.7, VZONE = 0.25, ZONE = 0.003, DEEP = 12, LEAVE = 0.5;
+  const REST = 102 * 60, VMAX = 1.2, VAPP = 0.35, MOUSE = 0.009, APP = 0.004, RANGE = 160, MARGIN = 30, CELL = 130, STILL = 1e-4, ENTER = 0.7, VZONE = 0.25, ZONE = 0.003, DEEP = 12, LEAVE = 0.5, EDGE = 0.995;
   const DRAG = 0.02; // grows with speed, as in water: a hard push dies quickly into a long, faint glide
   const n = list.length, X = new Float64Array(n), Y = new Float64Array(n), VX = new Float64Array(n), VY = new Float64Array(n), R = new Float64Array(n), LIGHT = new Float64Array(n), inside = new Uint8Array(n);
   list.forEach((d, i) => { X[i] = d[0]; Y[i] = d[1]; R[i] = d[2]; LIGHT[i] = Math.min(4, Math.pow(50 / d[2], 1.5)); }); // big drops lean away slowly
@@ -12,7 +12,7 @@ function technozenWorld(list, W, H) {
     if (o > 0) painted.set(i * n + j, o);
   }
   const clock = new Int32Array(n).fill(REST); // steps since each drop's own last push: one drop arriving must not keep the rest moving
-  let seed = 12345, zones = [];
+  let seed = 12345, zones = [], borders = [];
   const within = new Uint8Array(n);
   const inZone = (i, z) => X[i] + R[i] > z.x0 && X[i] - R[i] < z.x1 && Y[i] + R[i] > z.y0 && Y[i] - R[i] < z.y1;
 
@@ -170,6 +170,10 @@ function technozenWorld(list, W, H) {
           continue;
         }
       }
+      if (v > STILL) for (const b of borders) { // a window's edge is only a little harder to cross
+        const r = R[i], rowOn = Y[i] > b.y0 - r && Y[i] < b.y1 + r, columnOn = X[i] > b.x0 - r && X[i] < b.x1 + r;
+        if ((rowOn && (Math.abs(X[i] - b.x0) < r || Math.abs(X[i] - b.x1) < r)) || (columnOn && (Math.abs(Y[i] - b.y0) < r || Math.abs(Y[i] - b.y1) < r))) { VX[i] *= EDGE; VY[i] *= EDGE; v *= EDGE; break; }
+      }
       if (v <= STILL) continue;
       X[i] += VX[i]; Y[i] += VY[i];
       if (X[i] > bounds.l && X[i] < bounds.r && Y[i] > bounds.t && Y[i] < bounds.b) inside[i] = 1;
@@ -180,6 +184,6 @@ function technozenWorld(list, W, H) {
     }
   }
 
-  return { X, Y, VX, VY, R, REST, VMAX, VAPP, VZONE, step, setZones, awake: () => clock.some(c => c < REST) };
+  return { X, Y, VX, VY, R, REST, VMAX, VAPP, VZONE, step, setZones, setBorders: next => { borders = next; }, awake: () => clock.some(c => c < REST) };
 }
 if (typeof module !== "undefined") module.exports = technozenWorld;

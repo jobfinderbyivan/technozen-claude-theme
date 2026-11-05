@@ -305,6 +305,24 @@ const NONE = stir(-1e6, -1e6, 0);
   for (let t = 0; t < 100 && !again; t++) { w.step(NONE, [], BOUNDS); if (Math.hypot(w.X[0] - fromX, w.Y[0] - fromY) > 200) again = true; }
   assert(again, "lost on its way in");
 }
+{ // A window's edge makes a crossing a little harder, never impossible: a glide loses some speed and still gets through.
+  const glide = hasBorder => {
+    const w = one(); w.X[0] = 570; w.step(stir(540, 500), [], BOUNDS); w.VX[0] = 0.6; w.VY[0] = 0;
+    if (hasBorder) w.setBorders([{ x0: 600, y0: 0, x1: 1100, y1: 1000 }]);
+    for (let t = 0; t < 3000; t++) w.step(NONE, [], BOUNDS);
+    return w.X[0];
+  };
+  const free = glide(false), slowed = glide(true);
+  assert(slowed < free, "the edge made no difference: " + slowed + " against " + free);
+  assert(slowed > 640, "the edge stopped it, x=" + slowed);
+  assert(free - slowed < 0.5 * (free - 570), "the edge is too strong: " + slowed + " against " + free);
+  const pushed = one(); pushed.X[0] = 500; pushed.setBorders([{ x0: 600, y0: 0, x1: 1100, y1: 1000 }]);
+  for (let t = 0; t < 500; t++) pushed.step(stir(pushed.X[0] - 30, 500, 1, 5, 0), [], BOUNDS);
+  assert(pushed.X[0] > 700, "the mouse could not push it across, x=" + pushed.X[0]);
+  const still = one(); still.setBorders([{ x0: 790, y0: 0, x1: 1100, y1: 1000 }]);
+  for (let t = 0; t < 100; t++) still.step(NONE, [], BOUNDS);
+  assert(still.X[0] === 800 && !still.awake(), "an edge does not move a resting drop");
+}
 { // Fast enough: one step of 120 drops, stirred, with 200 moving shapes.
   const list = Array.from({ length: 120 }, (_, i) => [(i * 137) % W, (i * 71) % H, 5 + i % 56]);
   const w = world(list, W, H), shapes = Array.from({ length: 200 }, (_, i) => ({ x0: i, y0: i, x1: i + 300, y1: i + 40, vx: 0, vy: 0.5 }));
