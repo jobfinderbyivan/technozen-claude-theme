@@ -454,6 +454,49 @@ const NONE = stir(-1e6, -1e6, 0);
   }
   assert(world.bellNote(-1, false, () => 0.5) >= 0, "the first click has a note");
 }
+{ // The mindfulness bell: on time, once, never for time missed asleep. Binaural zen: about 1 in 5, or one a day at the set minute.
+  const at = (h, m, s = 0, day = 5) => new Date(2026, 10, day, h, m, s), never = () => 1, always = () => 0, base = { every: 0, next: 0, zen: "off", at: "09:00", gap: "random", done: "" };
+  let m = { ...base, every: 30, next: at(9, 30).getTime() };
+  assert(world.mindDue(m, at(9, 29, 59), never) === null, "early");
+  const on = world.mindDue(m, at(9, 30), never);
+  assert(on && on.gap === undefined, "a plain bell at the minute");
+  assert(m.next === at(10, 0).getTime(), "next bell 30 minutes on");
+  assert(world.mindDue(m, at(9, 30, 10), never) === null, "rang twice");
+  m = { ...base, every: 30, next: at(9, 30).getTime() };
+  assert(world.mindDue(m, at(9, 31), never) !== null, "a throttled page is a minute late, still rings");
+  m = { ...base, every: 30, next: at(9, 30).getTime() };
+  assert(world.mindDue(m, at(17, 0), never) === null && m.next === at(17, 30).getTime(), "waking from sleep rings nothing and starts counting again");
+  m = { ...base, every: 1, next: at(9, 1).getTime() }; // a 10 s timer that wobbles by a few ms must not make a 1 minute bell 70 s, or creep
+  const rung = []; let wobble = 7;
+  for (let k = 1; k <= 8640; k++) { wobble = (wobble * 31 + 11) % 97; const when = new Date(at(9, 0).getTime() + k * 10000 + wobble / 32 - 1.5); if (world.mindDue(m, when, never)) rung.push(when.getTime()); }
+  const spans = rung.slice(1).map((v, i) => Math.round((v - rung[i]) / 10000) * 10);
+  assert(rung.length >= 1438 && spans.every(v => v >= 50 && v <= 70) && Math.abs(rung[rung.length - 1] - at(9, 0).getTime() - rung.length * 60000) < 20000, rung.length + " bells in 24 hours, longest gap " + Math.max(...spans) + " s");
+  m = { ...base, every: 0, next: 0 };
+  assert(world.mindDue(m, at(9, 30), never) === null, "off rings nothing");
+  let seq = [], u = 0; const rnd = () => { u = (u * 16807 + 1) % 2147483647; return u / 2147483647; };
+  u = 42; let doubles = 0; for (let i = 0; i < 5000; i++) { m = { ...base, every: 1, next: 0, zen: "random" }; m.next = at(9, 0).getTime(); if (world.mindDue(m, at(9, 0), rnd).gap !== undefined) doubles++; }
+  assert(doubles > 850 && doubles < 1150, "about 20% double: " + doubles + " of 5000");
+  m = { ...base, every: 30, next: at(9, 30).getTime(), zen: "off" };
+  assert(world.mindDue(m, at(9, 30), always).gap === undefined, "no binaural zen, no double bell");
+  m = { ...base, zen: "daily", at: "14:05" };
+  assert(world.mindDue(m, at(14, 4, 59), always) === null, "daily too early");
+  assert(world.mindDue(m, at(14, 5), always).gap !== undefined, "daily is a double bell at the minute");
+  assert(world.mindDue(m, at(14, 5, 10), always) === null && world.mindDue(m, at(14, 6), always) === null, "daily rang twice");
+  assert(world.mindDue(m, at(14, 5, 0, 6), always) !== null, "daily rings again the next day");
+  m = { ...base, zen: "daily", at: "14:05" };
+  assert(world.mindDue(m, at(14, 10), always) === null, "a daily bell long past does not ring late");
+  m.at = "14:15"; assert(world.mindDue(m, at(14, 15), always) !== null, "a new time today still rings");
+  m = { ...base, every: 60, next: at(14, 5).getTime(), zen: "daily", at: "14:05" };
+  const both = world.mindDue(m, at(14, 5), always);
+  assert(both.gap !== undefined && world.mindDue(m, at(14, 5, 10), always) === null, "both due: one double bell");
+  m = { ...base, zen: "random", at: "14:05" };
+  assert(world.mindDue(m, at(14, 5), always) === null, "random does not use the daily time");
+  const G = world.BELL_GAPS;
+  assert(G.length === 5 && G.every((g, i) => !i || g > G[i - 1]), "five settings, close to far");
+  G.forEach((g, i) => assert(world.bellGap(String(i), always) === g, "set gap " + i));
+  const seen = new Set(); for (let v = 0; v < 1; v += 0.01) seen.add(world.bellGap("random", () => v));
+  assert(seen.size === 5, "random reaches all five: " + seen.size);
+}
 { // A long way out from under text: 10% smaller every 2 s. Near the edge of the text: no shrinking at all.
   const w = world([[800, 500, 40]], W, H); w.setZones([{ x0: 200, y0: 0, x1: 1400, y1: 1000 }]);
   for (let t = 0; t < 120; t++) w.step(NONE, [], BOUNDS);

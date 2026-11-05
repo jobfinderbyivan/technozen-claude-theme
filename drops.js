@@ -269,7 +269,7 @@ function technozenBellNote(last, ringing, rnd) {
   const notes = BELL_SCALE.map((_, i) => i).filter(i => i !== last && (!ringing || sweet(BELL_SCALE[i], BELL_SCALE[last])));
   return notes[Math.floor(rnd() * notes.length)];
 }
-// level 0..1 sets both loudness and length. Returns ring(level, time), which returns when the last bell ends.
+// level 0..1 sets both loudness and length. Returns ring(level, time, together), which returns when the last bell ends. together makes a beat however long ago the last bell rang.
 // A lone bell is the same in both ears. A second click while it rings makes a true binaural beat: 4 to 7 Hz between the ears in the new bell,
 // the ringing bell's right ear glides to the same split, and both last 35% longer. Left and right never mix, so the beat exists only in the listener's head.
 function technozenBells(ctx) {
@@ -281,8 +281,8 @@ function technozenBells(ctx) {
   let last = -1, ringsUntil = -1e9, rung = [];
   const stopAt = (b, t) => { b.end = t; for (const p of b.parts) { p.l.stop(t); p.r.stop(t); } };
   const fade = (b, t, length) => { b.parts.forEach((p, k) => { p.gain.gain.cancelAndHoldAtTime(t); p.gain.gain.setTargetAtTime(0, t, TAU[k] * length); }); };
-  return (level, t) => {
-    const ringing = t < ringsUntil, note = technozenBellNote(last, ringing, Math.random), beat = ringing ? 4 + Math.random() * 3 : 0;
+  return (level, t, together) => {
+    const ringing = together || t < ringsUntil, note = technozenBellNote(last, ringing, Math.random), beat = ringing ? 4 + Math.random() * 3 : 0;
     const f = base * BELL_SCALE[note], loud = (0.02 + 0.6 * level * level) / 1.87, length = (0.4 + 1.2 * level) * (ringing ? LONGER : 1);
     rung = rung.filter(b => b.end > t);
     if (ringing) for (const b of rung) if (!b.split) {
@@ -304,4 +304,25 @@ function technozenBells(ctx) {
     return Math.max(...rung.map(x => x.end));
   };
 }
-if (typeof module !== "undefined") { module.exports = technozenWorld; module.exports.bellNote = technozenBellNote; module.exports.BELL_SCALE = BELL_SCALE; }
+
+// The mindfulness bell. Seconds between a double bell's two bells, close together to lengthily apart. "random" or "0" to "4".
+const BELL_GAPS = [0.12, 0.35, 0.9, 2.2, 5];
+const technozenBellGap = (gap, rnd) => BELL_GAPS[gap === "random" ? Math.floor(rnd() * BELL_GAPS.length) : Number(gap)];
+// mind: {every: minutes or 0, next: ms, zen: "off" | "random" | "daily", at: "HH:MM", gap, done: which daily bell has rung}. Returns null or {gap}, gap only on a double bell.
+// A bell more than 2 minutes late is skipped, so a PC waking from sleep does not ring one for the hours it missed.
+function technozenMindDue(mind, now, rnd) {
+  const LATE = 120000, ms = now.getTime();
+  let bell = null;
+  if (mind.every > 0 && ms >= mind.next) {
+    const onTime = ms - mind.next < LATE;
+    if (onTime) bell = mind.zen === "random" && rnd() < 0.2 ? { gap: technozenBellGap(mind.gap, rnd) } : {};
+    mind.next = (onTime ? mind.next : ms) + mind.every * 60000; // from when it was due, so a late tick never pushes the rest back
+  }
+  if (mind.zen === "daily") {
+    const [h, m] = mind.at.split(":").map(Number), at = new Date(now), key = now.toDateString() + " " + mind.at;
+    at.setHours(h, m, 0, 0);
+    if (ms >= at.getTime() && ms - at.getTime() < LATE && mind.done !== key) { mind.done = key; bell = { gap: technozenBellGap(mind.gap, rnd) }; } // shortcut: a bell at 23:59 delayed past midnight is missed, at most once and only if the page is throttled
+  }
+  return bell;
+}
+if (typeof module !== "undefined") { module.exports = technozenWorld; module.exports.bellNote = technozenBellNote; module.exports.BELL_SCALE = BELL_SCALE; module.exports.bellGap = technozenBellGap; module.exports.BELL_GAPS = BELL_GAPS; module.exports.mindDue = technozenMindDue; }

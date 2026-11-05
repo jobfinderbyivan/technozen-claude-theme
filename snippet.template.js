@@ -6,6 +6,7 @@
   const html = document.documentElement;
   // __PHYSICS__
   let splashOn = false, rippleOn = true, zenOn = false, bellLevel = 0.5; // the panel's choices, kept current by sync()
+  const mind = { every: 0, next: 0, zen: "off", at: "09:00", gap: "random", done: "" };
   const style = document.getElementById("technozen") || Object.assign(document.createElement("style"), { id: "technozen" });
 
   function apply(slug) {
@@ -28,12 +29,22 @@
 
   // Zen Click: nothing runs and no sound device is held until a click, and the sound device is let go when the last bell has ended.
   let ring = null, hush = 0, ringEnd = 0;
-  function bell() {
-    const ctx = window.technozenAudio || (window.technozenAudio = new AudioContext());
+  function bell(gap) { // gap, in seconds, makes it a double bell
+    const ctx = window.technozenAudio || (window.technozenAudio = new AudioContext()), asked = performance.now();
     ring = ring || technozenBells(ctx);
-    ctx.resume();
-    ringEnd = ring(bellLevel, ctx.currentTime + 0.005);
-    clearTimeout(hush); hush = setTimeout(() => ctx.suspend(), (ringEnd - ctx.currentTime) * 1000 + 200);
+    ctx.resume().then(() => {
+      if (performance.now() - asked > 1000 || ctx !== window.technozenAudio) return; // sound not allowed yet: a bell must not sound late, on the next click
+      const t = ctx.currentTime + 0.005;
+      ringEnd = ring(bellLevel, t);
+      if (gap !== undefined) ringEnd = ring(bellLevel, t + gap, true);
+      clearTimeout(hush); hush = setTimeout(() => ctx.suspend(), (ringEnd - ctx.currentTime) * 1000 + 200);
+    });
+  }
+  function mindTick() {
+    const due = technozenMindDue(mind, new Date(), Math.random);
+    if (!due) return;
+    localStorage.setItem("technozen-mind-done", mind.done);
+    bell(due.gap);
   }
   if (window.technozenClick) for (const type of ["pointerdown", "mousedown"]) removeEventListener(type, window.technozenClick, true);
   // A second button pressed while another is held fires no pointerdown, only mousedown. The slider rings when let go instead, at its new setting.
@@ -43,7 +54,7 @@
   function remove() {
     const ours = THEMES[html.dataset.technozen];
     stopDrops();
-    zenOn = false; clearTimeout(hush);
+    zenOn = false; clearTimeout(hush); clearInterval(window.technozenMindTimer);
     if (window.technozenAudio) { // what is ringing rings out, as it does when the start-up card closes
       const ctx = window.technozenAudio;
       setTimeout(() => ctx.close(), Math.max(0, ringEnd - ctx.currentTime) * 1000 + 200);
@@ -321,9 +332,14 @@
     #technozen-panel .tz-live-label[data-off] { opacity: 0.5; cursor: default; }
     #technozen-panel .tz-dis[disabled] { opacity: 0.5; cursor: default; }
     #technozen-panel .tz-menu { inset: auto; margin: 0; padding: 8px 12px; border: 0; border-radius: 12px; color: inherit; font: inherit;
-      background: var(--cds-surface-popover, #fff); box-shadow: 0 0 0 1px var(--cds-border, #0002), 0 8px 24px #0003; }
+      background: var(--cds-surface-popover, #fff); backdrop-filter: blur(14px); box-shadow: 0 0 0 1px var(--cds-border, #0002), 0 8px 24px #0003; }
     #technozen-panel .tz-menu label { padding: 3px 0; }
     #technozen-panel .tz-sub { padding-left: 20px; }
+    #technozen-panel .tz-menu b { display: block; font-weight: 600; margin-top: 6px; } #technozen-panel .tz-menu b:first-child { margin-top: 0; }
+    #technozen-panel .tz-menu input:not([type=radio]), #technozen-panel .tz-menu select { font: inherit; color: inherit; background: transparent; border: 1px solid var(--cds-border, #0003); border-radius: 6px; padding: 1px 4px; margin-left: 4px; }
+    #technozen-panel .tz-menu input[type=number] { width: 52px; }
+    #technozen-panel .tz-menu select option { color: #222; }
+    #technozen-panel .tz-menu :disabled { opacity: 0.5; }
     #technozen-panel .tz-sub[data-off] { opacity: 0.5; }
     #technozen-panel .tz-bell { width: 80px; margin: 0; cursor: pointer; }
     #technozen-panel .tz-bell[disabled] { opacity: 0.5; cursor: default; }
@@ -337,13 +353,29 @@
     + `<div class="tz-sub"><label><input type="radio" name="tz-ripple" value="on"> Ripple</label><label><input type="radio" name="tz-ripple" value="off"> No ripple</label></div></div>`
     + `<label title="Every click rings a bell. A click while another still rings makes a binaural beat, best on headphones"><input type="checkbox" class="tz-zen"> Zen Click</label>`
     + `<input type="range" class="tz-bell" min="0" max="100" aria-label="Bell volume and length" title="Bell volume and length">`
+    + `<button class="tz-dis" popovertarget="tz-mindful" title="A bell that goes off by itself">mindfulness bell ▴</button>`
+    + `<div class="tz-menu" id="tz-mindful" popover><b>Bell</b>`
+    + [["off", "Off"], ["30", "30 minutes"], ["60", "1 hour"]].map(o => `<label><input type="radio" name="tz-mind" data-store="mind" value="${o[0]}"> ${o[1]}</label>`).join("")
+    + `<label><input type="radio" name="tz-mind" data-store="mind" value="custom"> Custom <input type="number" class="tz-mind-custom" data-store="mind-custom" min="1" max="1440" step="1" aria-label="Minutes between bells"> min</label>`
+    + `<b title="A double bell: two close notes that make a binaural beat, best on headphones">Binaural zen</b><label><input type="radio" name="tz-mind-zen" data-store="mind-zen" value="off"> Off</label>`
+    + `<label title="About 1 bell in 5 is a double bell"><input type="radio" name="tz-mind-zen" data-store="mind-zen" value="random"> Random</label>`
+    + `<label title="A double bell at this time every day"><input type="radio" name="tz-mind-zen" data-store="mind-zen" value="daily"> Daily at <input type="time" class="tz-mind-at" data-store="mind-at" aria-label="Time of the daily double bell"></label>`
+    + `<b>Time between the two bells</b><select class="tz-gap" data-store="mind-gap" aria-label="Time between the two bells"><option value="random">Random</option><option value="0">1, very close</option><option value="1">2, close</option><option value="2">3, medium</option><option value="3">4, apart</option><option value="4">5, far apart</option></select></div>`
     + `<button class="tz-remove" title="Remove Technozen (Ctrl+Alt+0)">×</button><button class="tz-fold" title="Fold the panel">◐</button>`;
   if (localStorage.getItem("technozen-panel") === "folded") panel.dataset.folded = "";
   panel.querySelector(".tz-bell").onchange = e => { localStorage.setItem("technozen-bell", e.target.value); sync(); bell(); }; // let go of the slider to hear the new setting
-  panel.querySelector(".tz-menu").onbeforetoggle = e => { // the drop-up opens above its button
+  panel.querySelectorAll(".tz-menu").forEach(menu => { menu.onbeforetoggle = e => { // a drop-up opens above its button
     if (e.newState !== "open") return;
-    const r = panel.querySelector(".tz-dis").getBoundingClientRect();
-    e.target.style.right = innerWidth - r.right + "px"; e.target.style.bottom = innerHeight - r.top + 12 + "px";
+    const r = panel.querySelector(`[popovertarget=${menu.id}]`).getBoundingClientRect();
+    menu.style.right = innerWidth - r.right + "px"; menu.style.bottom = innerHeight - r.top + 12 + "px";
+  }; });
+  panel.querySelectorAll(".tz-mind-custom, .tz-mind-at").forEach(field => { field.onblur = () => { if (!field.value) sync(); }; }); // a field left blank shows its setting again; not sooner, a time being typed is blank for a moment
+  panel.onchange = e => {
+    const t = e.target;
+    if (!t.dataset.store || !t.value) return;
+    localStorage.setItem("technozen-" + t.dataset.store, t.value);
+    sync();
+    if (t.classList.contains("tz-gap") && mind.zen !== "off") bell(technozenBellGap(mind.gap, Math.random)); // hear the new spacing
   };
   panel.onclick = e => {
     const b = e.target.closest("button, input");
@@ -379,7 +411,18 @@
     panel.querySelectorAll("[name=tz-ripple]").forEach(b => { b.disabled = !splashOn; });
     zenOn = localStorage.getItem("technozen-zenclick") === "on"; bellLevel = Number(localStorage.getItem("technozen-bell") || 50) / 100;
     panel.querySelector(".tz-zen").checked = zenOn;
-    panel.querySelector(".tz-bell").value = bellLevel * 100; panel.querySelector(".tz-bell").disabled = !zenOn;
+    const kept = k => localStorage.getItem("technozen-" + k), when = kept("mind") || "off", custom = Math.max(1, Math.min(1440, Math.round(Number(kept("mind-custom")) || 15))); // whole minutes
+    const every = when === "custom" ? custom : Number(when) || 0;
+    if (every !== mind.every) mind.next = Date.now() + every * 60000;
+    mind.every = every; mind.zen = kept("mind-zen") || "off"; mind.at = kept("mind-at") || "09:00"; mind.gap = kept("mind-gap") || "random"; mind.done = kept("mind-done") || "";
+    panel.querySelector(`[name=tz-mind][value="${when}"]`).checked = true;
+    panel.querySelector(`[name=tz-mind-zen][value="${mind.zen}"]`).checked = true;
+    const minutes = panel.querySelector(".tz-mind-custom"), at = panel.querySelector(".tz-mind-at"), gap = panel.querySelector(".tz-gap");
+    minutes.value = custom; minutes.disabled = when !== "custom"; at.value = mind.at; at.disabled = mind.zen !== "daily"; gap.value = mind.gap; gap.disabled = mind.zen === "off";
+    const timed = every > 0 || mind.zen === "daily";
+    clearInterval(window.technozenMindTimer);
+    window.technozenMindTimer = timed ? setInterval(mindTick, 10000) : 0;
+    panel.querySelector(".tz-bell").value = bellLevel * 100; panel.querySelector(".tz-bell").disabled = !zenOn && !timed;
     if (possible && wanted) startDrops(); else stopDrops();
   }
 
