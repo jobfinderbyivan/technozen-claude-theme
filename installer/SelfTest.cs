@@ -280,6 +280,13 @@ static class SelfTest
         int tailBuffers = 0; double level5s = 0;
         while (!tail.Quiet && tailBuffers < 1000) { tail.Render(buf); tailBuffers++; if (tailBuffers == 250) foreach (short v in buf) level5s = Math.Max(level5s, Math.Abs(v) / 32768.0); }
         check(level5s > 0.01 && tailBuffers < 1000, "bell rings out: level " + level5s.ToString("0.000") + " after 5 s, quiet after " + (tailBuffers * 0.02).ToString("0.0") + " s");
+        // When the card opens the hum eases in over 1.5 s, with no step anywhere in the rise. A bell at the very start is not held back.
+        var opening = new Synth(); opening.SetMotion(0, 220, Scene.MaxSpeed); var humLevel = new double[100]; double humStep = 0;
+        for (int i = 0; i < 100; i++) { opening.Render(buf); foreach (short v in buf) humLevel[i] = Math.Max(humLevel[i], Math.Abs(v) / 32768.0); if (i > 0) humStep = Math.Max(humStep, humLevel[i] - humLevel[i - 1]); }
+        double humFull = humLevel[99];
+        check(humLevel[5] < humFull * 0.05 && humLevel[37] > humFull * 0.3 && humLevel[37] < humFull * 0.6 && humStep < humFull * 0.06, "hum eases in: " + (humLevel[5] / humFull).ToString("0.00") + " at 0.1 s, " + (humLevel[37] / humFull).ToString("0.00") + " at 0.75 s, largest step " + (humStep / humFull).ToString("0.00"));
+        var firstBell = new Synth(); firstBell.Strike(220, 226, 1f); double firstPeak = 0; for (int i = 0; i < 5; i++) { firstBell.Render(buf); foreach (short v in buf) firstPeak = Math.Max(firstPeak, Math.Abs(v) / 32768.0); }
+        check(firstPeak > 0.3, "a bell at the very start rings at full strength: " + firstPeak.ToString("0.00"));
         // The real device, if there is one: the pump must keep rendering past its first queued buffers.
         var live = new Synth();
         if (live.Start())

@@ -147,7 +147,7 @@ class Synth : IDisposable
     static readonly float TailDecay = (float)Math.Exp(-1.0 / (0.01 * Rate));
     readonly object gate = new object();
     long rendered; // absolute frames rendered so far; a strike starts at the next frame rendered
-    const float Attack = 1f / (0.3f * Rate), Release = 1f / (0.8f * Rate), BellAttackFrames = 0.015f * Rate, MasterGain = 0.5f, Silent = 3e-5f;
+    const float Attack = 1f / (0.3f * Rate), Release = 1f / (0.8f * Rate), BellAttackFrames = 0.015f * Rate, HumRiseFrames = 1.5f * Rate, MasterGain = 0.5f, Silent = 3e-5f;
     // The limiter turns the whole stereo mix down together instead of bending the waveform: it sees a crest
     // 10 ms before it is heard and glides there, holding 50 ms so the crest pattern of two notes cannot shake the gain.
     const float Ceiling = 0.85f; const int LookAhead = 480, Hold = 2400;
@@ -220,11 +220,12 @@ class Synth : IDisposable
             for (int n = 0; n < Frames; n++)
             {
                 float l = 0, r = 0; long frame = rendered + n;
+                float rise = Math.Min(1f, frame / HumRiseFrames), hum = rise * rise * (3 - 2 * rise); // the hum eases in when the card opens; bells stay crisp
                 for (int v = 0; v < MaxMotion; v++)
                 {
                     mAmp[v] += (mTarget[v] - mAmp[v]) * (mTarget[v] > mAmp[v] ? Attack : Release);
                     if (mAmp[v] < Silent) continue;
-                    float s = Sine[(int)(mPhase[v] * 4096) & 4095] * mAmp[v]; l += s; r += s;
+                    float s = Sine[(int)(mPhase[v] * 4096) & 4095] * mAmp[v] * hum; l += s; r += s;
                     mPhase[v] += mInc[v]; if (mPhase[v] >= 1) mPhase[v] -= 1;
                 }
                 for (int b = 0; b < MaxBells; b++)
