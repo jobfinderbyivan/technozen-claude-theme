@@ -60,3 +60,27 @@ nav, aside, .dframe-sidebar {
 h1, h2 {
   font-weight: 500 !important;
 }
+/* The theme switcher: a glazed white tile, with the split gloss and the soft blue glow. */
+#technozen-panel {
+  background: linear-gradient(180deg, #ffffff 0%, #ffffff 50%, #f3f5f7 50%, #edf0f3 100%);
+  box-shadow: inset 0 1px 0 #ffffff, 0 0 0 1px #dde2e6, 0 10px 28px rgba(43, 47, 51, 0.1);
+}
+#technozen-panel .tz-menu {
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: inset 0 1px 0 #ffffff, 0 0 0 1px #dde2e6, 0 10px 28px rgba(43, 47, 51, 0.1);
+}
+#technozen-panel :is(.tz-dis, .tz-remove, .tz-fold) {
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ffffff 0%, #f7f9fa 50%, #e7ebee 50%, #eef1f4 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 0 0 1px rgba(43, 47, 51, 0.1), 0 2px 5px rgba(43, 47, 51, 0.08);
+}
+#technozen-panel .tz-dis:not([disabled]):hover, #technozen-panel .tz-remove:hover, #technozen-panel .tz-fold:hover {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 0 0 3px #cfeaf7, 0 2px 5px rgba(43, 47, 51, 0.1);
+}
+#technozen-panel .tz-menu :is(input:not([type="radio"]), select) {
+  background: #f3f5f7;
+  border: 1px solid #dde2e6;
+  border-radius: 10px;
+  box-shadow: inset 0 1px 2px rgba(43, 47, 51, 0.08);
+}

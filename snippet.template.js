@@ -11,12 +11,14 @@
 
   function apply(slug) {
     if (!THEMES[slug]) slug = ORDER[0];
+    if (html.dataset.technozen !== slug) stopDrops(); // each theme has its own live things
     if (style.textContent !== CSS[slug]) style.textContent = CSS[slug];
     document.head.appendChild(style); // (re-)append so it stays after the app's own stylesheets
     if (!html.dataset.technozen) style.dataset.appMode = html.dataset.mode || ""; // the app's own light/dark, for remove()
     html.dataset.technozen = slug;
     html.dataset.mode = THEMES[slug].mode; // a few non-variable rules (icons, scrollbars) key off data-mode
     localStorage.setItem("technozen", slug);
+    panel.style.setProperty("--tz-accent", THEMES[slug].accent); panel.style.colorScheme = THEMES[slug].mode; // ticks, the slider and the clock icon follow the theme
     sync();
   }
 
@@ -74,15 +76,16 @@
   function startDrops() { if (!window.technozenDropsStop) runDrops().catch(e => { console.warn("[technozen] drops stay painted on the leaf:", e); stopDrops(); }); }
 
   async function runDrops() {
+    const spec = DROPS[html.dataset.technozen];
     let alive = true, raf = 0, timer = 0, resizeTimer = 0, scanTimer = 0, zoneTimer = 0, zoneIdle = 0, zonesStale = false, driftTimer = 0, driftTick = 0, busyAt = 0, restless = true, last = 0, spare = 0, activeUntil = 0, lastSample = 0, scrolledAt = -1e9;
     const off = new AbortController(), on = { passive: true, capture: true, signal: off.signal };
     const canvas = Object.assign(document.createElement("canvas"), { id: "technozen-drops" });
     canvas.style.cssText = "position:fixed;inset:0;width:100%;height:100%;z-index:-1;pointer-events:none";
     const ctx = canvas.getContext("2d");
-    const world = technozenWorld(DROPS.drops, DROPS.w, DROPS.h);
+    const world = technozenWorld(spec.drops, spec.w, spec.h, spec.lift);
     const mouse = { x: -1e6, y: -1e6, vx: 0, vy: 0, power: 0 };
     let shapes = [], s = 1, ox = 0, oy = 0, dpr = 1, mx = 0, my = 0, mt = 0;
-    const bounds = { l: 0, t: 0, r: 0, b: 0, s: 1 }, drawnX = new Float64Array(DROPS.drops.length), drawnY = new Float64Array(DROPS.drops.length), drawnR = new Float64Array(DROPS.drops.length);
+    const bounds = { l: 0, t: 0, r: 0, b: 0, s: 1 }, drawnX = new Float64Array(spec.drops.length), drawnY = new Float64Array(spec.drops.length), drawnR = new Float64Array(spec.drops.length);
     let bursts = [], ripples = [], zonesKnown = false; const returning = new Set(), revivals = new Set();
     let io, mo, ro;
     window.technozenDropsStop = () => {
@@ -93,7 +96,7 @@
 
     // Every drop on one sheet, drawn by the browser from the same shape and gradients as the painted leaf.
     let ax = 2, ay = 2, rowH = 0;
-    const cells = DROPS.drops.map(d => {
+    const cells = spec.drops.map(d => {
       const w = Math.ceil(d[2] * 2.8), h = Math.ceil(d[3] * 2.8);
       if (ax + w > 1400) { ax = 2; ay += rowH + 2; rowH = 0; }
       const cell = { x: ax, y: ay, w, h, left: d[2] * 1.25, top: d[3] * 1.25 };
@@ -101,16 +104,16 @@
       return cell;
     });
     const sheetH = ay + rowH + 2;
-    const uses = DROPS.drops.map((d, i) => `<use href='#d' transform='translate(${cells[i].x + cells[i].left} ${cells[i].y + cells[i].top})scale(${d[2]} ${d[3]})' stroke-width='${d[4]}'/>`).join("");
+    const uses = spec.drops.map((d, i) => `<use href='#d' transform='translate(${cells[i].x + cells[i].left} ${cells[i].y + cells[i].top})scale(${d[2]} ${d[3]})' stroke-width='${d[4]}'/>`).join("");
     const image = new Image();
-    image.src = "data:image/svg+xml," + encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='1400' height='${sheetH}' viewBox='0 0 1400 ${sheetH}'><defs>${DROPS.defs}</defs>${uses}</svg>`);
+    image.src = "data:image/svg+xml," + encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='1400' height='${sheetH}' viewBox='0 0 1400 ${sheetH}'><defs>${spec.defs}</defs>${uses}</svg>`);
     await image.decode();
     if (!alive) return;
     const sheet = document.createElement("canvas");
 
     function fit() { // the leaf's own center / cover scaling, so a drop sits exactly where it was painted
       const vw = innerWidth, vh = innerHeight;
-      s = Math.max(vw / DROPS.w, vh / DROPS.h); ox = (vw - DROPS.w * s) / 2; oy = (vh - DROPS.h * s) / 2; dpr = devicePixelRatio || 1;
+      s = Math.max(vw / spec.w, vh / spec.h); ox = (vw - spec.w * s) / 2; oy = (vh - spec.h * s) / 2; dpr = devicePixelRatio || 1;
       canvas.width = Math.round(vw * dpr); canvas.height = Math.round(vh * dpr);
       bounds.l = -ox / s; bounds.t = -oy / s; bounds.r = (vw - ox) / s; bounds.b = (vh - oy) / s; bounds.s = s;
     }
@@ -123,15 +126,21 @@
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       for (let i = 0; i < cells.length; i++) {
         const c = cells[i], x = world.X[i] + world.VX[i] * ahead, y = world.Y[i] + world.VY[i] * ahead; // carried on past the 60 Hz step to this exact moment
-        const size = world.R[i] / DROPS.drops[i][2];
+        const size = world.R[i] / spec.drops[i][2];
         drawnX[i] = x; drawnY[i] = y; drawnR[i] = world.R[i];
-        if (size) ctx.drawImage(sheet, c.x * sx, c.y * sy, c.w * sx, c.h * sy, (ox + (x - c.left * size) * s) * dpr, (oy + (y - c.top * size) * s) * dpr, c.w * k * size, c.h * k * size);
+        if (!size) continue;
+        if (spec.glow) ctx.globalAlpha = 0.45 + 0.55 * Math.min(1, Math.hypot(world.VX[i], world.VY[i]) / 0.3); // embers brighten as they move
+        if (spec.spin) { // petals turn as they travel, each from its own angle
+          ctx.save(); ctx.translate((ox + x * s) * dpr, (oy + y * s) * dpr); ctx.rotate(i * 2.4 + (x - y) * 0.012);
+          ctx.drawImage(sheet, c.x * sx, c.y * sy, c.w * sx, c.h * sy, -c.left * size * k, -c.top * size * k, c.w * k * size, c.h * k * size);
+          ctx.restore();
+        } else ctx.drawImage(sheet, c.x * sx, c.y * sy, c.w * sx, c.h * sy, (ox + (x - c.left * size) * s) * dpr, (oy + (y - c.top * size) * s) * dpr, c.w * k * size, c.h * k * size);
       }
       const now = performance.now();
       bursts = bursts.filter(b => now - b.t < 350);
       for (const b of bursts) { // a pop: a thin ring opening and a few specks flying off, gone in a third of a second
         const u = (now - b.t) / 350, x = (ox + b.x * s) * dpr, y = (oy + b.y * s) * dpr, reach = (4 + 18 * u) * s * dpr;
-        ctx.globalAlpha = 1 - u; ctx.strokeStyle = ctx.fillStyle = "#fff"; ctx.lineWidth = 1.2 * dpr;
+        ctx.globalAlpha = 1 - u; ctx.strokeStyle = ctx.fillStyle = spec.tint; ctx.lineWidth = 1.2 * dpr;
         ctx.beginPath(); ctx.arc(x, y, reach, 0, 6.3); ctx.stroke();
         for (let a = 0; a < 6; a++) { ctx.beginPath(); ctx.arc(x + Math.cos(a * 1.05) * reach * 1.3, y + Math.sin(a * 1.05) * reach * 1.3, 1.1 * dpr, 0, 6.3); ctx.fill(); }
       }
@@ -141,7 +150,7 @@
         if (u <= 0) continue;
         const reach = (r.r + 70 * (1 - (1 - u) * (1 - u))) * s * dpr, x = (ox + r.x * s) * dpr, y = (oy + r.y * s) * dpr, fade = (1 - u) * (1 - u);
         ctx.lineWidth = 1.2 * dpr;
-        ctx.globalAlpha = 0.6 * fade; ctx.strokeStyle = "#fff"; ctx.beginPath(); ctx.arc(x, y, reach, 0, 6.3); ctx.stroke();
+        ctx.globalAlpha = 0.6 * fade; ctx.strokeStyle = spec.tint; ctx.beginPath(); ctx.arc(x, y, reach, 0, 6.3); ctx.stroke();
         ctx.globalAlpha = 0.25 * fade; ctx.strokeStyle = "#032"; ctx.beginPath(); ctx.arc(x, y, reach + 1.5 * dpr, 0, 6.3); ctx.stroke();
       }
       ctx.globalAlpha = 1;
@@ -321,13 +330,21 @@
   // snippet reuses the existing panel. Its look comes from the app's own variables, so it fits any theme.
   const panel = document.getElementById("technozen-panel") || Object.assign(document.createElement("div"), { id: "technozen-panel" });
   panel.innerHTML = `<style>
-    #technozen-panel { position: fixed; right: 16px; bottom: 16px; z-index: 2147483647; display: flex; align-items: center; gap: 8px;
+    #technozen-panel { position: fixed; right: 16px; bottom: 16px; z-index: 2147483647; display: flex; flex-wrap: wrap; justify-content: flex-end; max-width: calc(100vw - 32px); box-sizing: border-box; align-items: center; gap: 8px;
       padding: 6px 8px; border-radius: 999px; font: 13px system-ui, sans-serif; color: var(--cds-text-primary, #222);
       background: var(--cds-surface-popover, #fff); box-shadow: 0 0 0 1px var(--cds-border, #0002), 0 8px 24px #0003; }
     #technozen-panel[data-folded] > :not(.tz-fold) { display: none; }
     #technozen-panel button { all: unset; cursor: pointer; box-sizing: border-box; }
-    #technozen-panel .tz-swatch { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--cds-surface-popover, #fff); box-shadow: 0 0 0 1px var(--cds-border, #0003); }
-    #technozen-panel .tz-swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--cds-text-primary, #222); }
+    #technozen-panel .tz-swatch { flex: none; width: 22px; height: 22px; border-radius: 50%; }
+    #technozen-panel .tz-swatch[aria-pressed="true"] { outline: 2px solid currentColor; outline-offset: 2px; }
+    #technozen-panel [data-theme="shiro"] { background: linear-gradient(180deg, #fff 50%, #e7ebee 50%, #f3f5f7); box-shadow: inset 0 0 0 1px #c9d0d6, inset 0 -4px 5px -2px #2f8fe0; }
+    #technozen-panel [data-theme="take"] { border-radius: 50% 50% 50% 50% / 46% 46% 54% 54%; background: radial-gradient(circle at 35% 28%, #fff 9%, #fff8 24%, transparent 42%), radial-gradient(circle at 50% 60%, #c8f08f, #5fb82c 68%, #2f7d1e); box-shadow: 0 2px 3px #0a3c0a66; }
+    #technozen-panel [data-theme="sakura"] { border-radius: 7px; background: linear-gradient(180deg, #d9738d, #bc4e68); box-shadow: inset 0 1px 0 #fff7, 0 0 0 1px #9c7a66; }
+    #technozen-panel [data-theme="mizu"] { background: radial-gradient(circle at 50% 18%, #5fe4d6, #1e6a8c 55%, #0b2a3f); box-shadow: inset 0 0 0 1px #e8f6fb55, 0 0 6px #2ed3c488; }
+    #technozen-panel [data-theme="yoru"] { border-radius: 6px; background: radial-gradient(circle at 50% 70%, #f2b35b 0 20%, #f2b35b44 42%, transparent 64%), #16181d; box-shadow: inset 0 1px 0 #fff2, 0 0 0 1px #3a3f49; }
+    #technozen-panel { accent-color: var(--tz-accent); }
+    #technozen-panel :is(.tz-dis, .tz-remove, .tz-fold) { transition: transform 0.15s, box-shadow 0.15s; }
+    #technozen-panel .tz-dis { padding: 3px 10px; white-space: nowrap; }
     #technozen-panel label { display: flex; align-items: center; gap: 4px; cursor: pointer; user-select: none; }
     #technozen-panel .tz-live-label[data-off] { opacity: 0.5; cursor: default; }
     #technozen-panel .tz-dis[disabled] { opacity: 0.5; cursor: default; }
@@ -338,14 +355,13 @@
     #technozen-panel .tz-menu b { display: block; font-weight: 600; margin-top: 6px; } #technozen-panel .tz-menu b:first-child { margin-top: 0; }
     #technozen-panel .tz-menu input:not([type=radio]), #technozen-panel .tz-menu select { font: inherit; color: inherit; background: transparent; border: 1px solid var(--cds-border, #0003); border-radius: 6px; padding: 1px 4px; margin-left: 4px; }
     #technozen-panel .tz-menu input[type=number] { width: 52px; }
-    #technozen-panel .tz-menu select option { color: #222; }
     #technozen-panel .tz-menu :disabled { opacity: 0.5; }
     #technozen-panel .tz-sub[data-off] { opacity: 0.5; }
     #technozen-panel .tz-bell { width: 80px; margin: 0; cursor: pointer; }
     #technozen-panel .tz-bell[disabled] { opacity: 0.5; cursor: default; }
     #technozen-panel .tz-remove { padding: 0 6px; opacity: 0.7; } #technozen-panel .tz-remove:hover { opacity: 1; }
     #technozen-panel .tz-fold { width: 22px; height: 22px; border-radius: 50%; text-align: center; line-height: 22px; background: var(--cds-fill-secondary, #0001); }
-  </style>` + ORDER.map(s => `<button class="tz-swatch" data-theme="${s}" title="${THEMES[s].name}" style="background: linear-gradient(135deg, ${THEMES[s].bg} 45%, ${THEMES[s].accent} 55%)"></button>`).join("")
+  </style>` + ORDER.map(s => `<button class="tz-swatch" data-theme="${s}" title="${THEMES[s].name}" aria-label="${THEMES[s].name}"></button>`).join("")
     + `<label title="Full skin on, or colors only"><input type="checkbox" class="tz-skin"> skin</label>`
     + `<label class="tz-live-label"><input type="checkbox" class="tz-live"> interactive</label>`
     + `<button class="tz-dis" popovertarget="tz-disruption" title="What text does when it lands on a drop">text bubble disruption ▴</button>`
@@ -396,13 +412,13 @@
     if (!panel.isConnected) document.body.appendChild(panel);
     panel.querySelectorAll(".tz-swatch").forEach(b => b.setAttribute("aria-pressed", b.dataset.theme === html.dataset.technozen));
     panel.querySelector(".tz-skin").checked = html.dataset.technozenSkin === "on";
-    const possible = html.dataset.technozen === "take" && html.dataset.technozenSkin === "on";
+    const possible = html.dataset.technozenSkin === "on" && !!THEMES[html.dataset.technozen]; // no theme yet on the first skin() of a run
     const stored = localStorage.getItem("technozen-interactive");
     const wanted = stored ? stored === "on" : !matchMedia("(prefers-reduced-motion: reduce)").matches;
     const box = panel.querySelector(".tz-live"), label = panel.querySelector(".tz-live-label");
     box.disabled = !possible; box.checked = wanted;
     label.toggleAttribute("data-off", !possible);
-    label.title = possible ? "Drops move with the mouse and the app, or stay painted on the leaf" : "Only the Take theme with its full skin has drops";
+    label.title = possible ? "The theme's floating things move with the mouse and the app" : "Needs the full skin";
     splashOn = localStorage.getItem("technozen-disruption") === "splash"; rippleOn = localStorage.getItem("technozen-ripple") !== "off";
     panel.querySelector(`[name=tz-mode][value=${splashOn ? "splash" : "gentle"}]`).checked = true;
     panel.querySelector(`[name=tz-ripple][value=${rippleOn ? "on" : "off"}]`).checked = true;

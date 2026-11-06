@@ -136,8 +136,19 @@ def test_js():
     check("@match        https://claude.ai/*" in (DIST / "technozen.user.js").read_text(encoding="utf-8"), "user.js: missing @match")
 
 
+def test_switcher():
+    for slug in THEMES:
+        check("#technozen-panel" in (build.ROOT / "skins" / f"{slug}.css").read_text(encoding="utf-8"), f"skins/{slug}.css: the theme switcher has no skin")
+        check(f'[data-theme="{slug}"]' in (build.ROOT / "snippet.template.js").read_text(encoding="utf-8"), f"{slug}: its swatch does not look like the theme")
+
+
 def test_drops():
-    import leaf
+    import leaf, motes
+    specs = motes.specs()
+    check(set(specs) == set(THEMES), "every theme needs its live things")
+    for slug, spec in specs.items():
+        check("id='d'" in spec["defs"] and spec["tint"].startswith("#") and len(spec["drops"]) >= 30, f"{slug}: incomplete live things")
+        check(all(d[2] >= 5 for d in spec["drops"]), f"{slug}: a thing too small to survive shrinking")
     check(leaf.svg().count("<use ") == 120 and leaf.svg(count=0).count("<use ") == 0, "leaf: bare version must have no drops, normal one 120")
     if not shutil.which("node"):
         return print("node not found, skipped the drops physics")
@@ -179,7 +190,7 @@ def test_idempotent():
 
 if __name__ == "__main__":
     # test_palette runs before the build so a bad themes.json gets a message, not a traceback
-    for test in (test_palette, build.build, test_contrast, test_distinct, test_css, test_js, test_drops, test_cli_themes, test_round_trip, test_idempotent):
+    for test in (test_palette, build.build, test_contrast, test_distinct, test_css, test_js, test_switcher, test_drops, test_cli_themes, test_round_trip, test_idempotent):
         test()
         if failures:
             print(f"\nFAIL in {test.__name__}:")

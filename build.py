@@ -162,11 +162,11 @@ def skin_css(slug):
 
 
 def snippet():
-    themes = {slug: {"name": t["name"], "mode": t["mode"], "accent": t["accent"], "bg": t["bg"]} for slug, t in THEMES.items()}
+    themes = {slug: {"name": t["name"], "mode": t["mode"], "accent": t["accent"]} for slug, t in THEMES.items()}
     sheets = {slug: minify(color_css(slug)) + "\n" + skin_css(slug) for slug in THEMES}  # only the active theme's sheet is ever in the page
     template = (ROOT / "snippet.template.js").read_text(encoding="utf-8")
-    import leaf
-    spec = {"w": leaf.W, "h": leaf.H, "defs": leaf.DROP_DEFS, "drops": leaf.drops()}
+    import motes
+    spec = motes.specs()
     physics = (ROOT / "drops.js").read_text(encoding="utf-8").split('if (typeof module')[0]
     # json.dumps makes the CSS plain quoted strings, so no backtick or ${} escaping to get wrong.
     return (template.replace("__THEMES__", json.dumps(themes)).replace("__CSS__", json.dumps(sheets))

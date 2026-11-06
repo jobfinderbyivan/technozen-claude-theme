@@ -1,6 +1,6 @@
 // Physics for the Take skin's water drops, with no page access. Lengths are leaf-image units, speeds are units per 1/60 s step.
 // Speed limits are set for the leaf drawn at scale 1.6 (a 2560 wide window) and adjusted by bounds.s, so they hold on screen at any size.
-function technozenWorld(list, W, H) {
+function technozenWorld(list, W, H, lift) {
   const REST = 102 * 60, VMAX = 1.2, VAPP = 0.25, MOUSE = 0.009, APP = 0.001, RANGE = 160, MARGIN = 30, CELL = 130, STILL = 1e-4, ENTER = 0.7, VZONE = 0.12, ZONE = 0.0012, RAMP = 120, LONG = 150, TINY = 3, SHRINK = Math.pow(0.9, 1 / 120), DEEP = 12, LEAVE = 0.5, EDGE = 0.995, DRIFT = 300 * 60, DRIFT_REACH = 380, DRIFT_SHARE = 0.7, VHULL = 0.7, HULL = 30, HULL_AGAIN = 90;
   const DRAG = 0.02; // grows with speed, as in water: a hard push dies quickly into a long, faint glide
   const n = list.length, X = new Float64Array(n), Y = new Float64Array(n), VX = new Float64Array(n), VY = new Float64Array(n), R = new Float64Array(n), LIGHT = new Float64Array(n), inside = new Uint8Array(n);
@@ -231,6 +231,7 @@ function technozenWorld(list, W, H) {
     for (let i = 0; i < n; i++) {
       if (clock[i] >= REST) continue;
       if (hull[i]) { hull[i]--; VX[i] += HX[i]; VY[i] += HY[i]; }
+      if (lift) VY[i] -= lift * k; // only while moving, so it still comes to rest
       const left = 1 - clock[i] / REST, cap = vmax * left * left; // smooth to the end, no visible stop
       let v = Math.hypot(VX[i], VY[i]);
       const slow = Math.min(1 - DRAG * v / k, v > cap ? cap / v : 1);

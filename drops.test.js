@@ -454,6 +454,18 @@ const NONE = stir(-1e6, -1e6, 0);
   }
   assert(world.bellNote(-1, false, () => 0.5) >= 0, "the first click has a note");
 }
+{ // Bubbles rise while moving, slowly, and still stop at 102 s. At rest nothing lifts them.
+  const up = world([[800, 700, 15]], W, H, 0.00002), still = world([[800, 700, 15]], W, H, 0.00002);
+  up.step(stir(800, 730), [], BOUNDS);
+  for (let t = 0; t < 600; t++) { up.step(NONE, [], BOUNDS); still.step(NONE, [], BOUNDS); }
+  const flat = world([[800, 700, 15]], W, H); flat.step(stir(800, 730), [], BOUNDS); for (let t = 0; t < 600; t++) flat.step(NONE, [], BOUNDS);
+  assert(up.Y[0] < flat.Y[0] - 2, "no rise: " + up.Y[0] + " vs " + flat.Y[0]);
+  assert(still.Y[0] === 700, "a resting bubble moved");
+  const calm = world([[800, 700, 15]], W, H, 0.00002); calm.setZones([{ x0: 700, y0: 0, x1: 1000, y1: 1000 }]);
+  calm.setZones([]); let top = 0; for (let t = 0; t < 12000; t++) { calm.step(NONE, [], BOUNDS); top = Math.max(top, speed(calm) * 60 * 1.6); }
+  assert(top < 8, "rises too fast: " + top + " px/s");
+  assert(!calm.awake() && speed(calm) === 0, "still rests");
+}
 { // The mindfulness bell: on time, once, never for time missed asleep. Binaural zen: about 1 in 5, or one a day at the set minute.
   const at = (h, m, s = 0, day = 5) => new Date(2026, 10, day, h, m, s), never = () => 1, always = () => 0, base = { every: 0, next: 0, zen: "off", at: "09:00", gap: "random", done: "" };
   let m = { ...base, every: 30, next: at(9, 30).getTime() };
